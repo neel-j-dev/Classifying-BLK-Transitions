@@ -1,5 +1,3 @@
-"""Shared utilities for running BLT GNN experiments on a dataset split."""
-
 from __future__ import annotations
 
 from pathlib import Path

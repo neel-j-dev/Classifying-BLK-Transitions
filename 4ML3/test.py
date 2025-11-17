@@ -1,5 +1,3 @@
-"""Testing script for the BLT GNN models."""
-
 from __future__ import annotations
 
 import argparse

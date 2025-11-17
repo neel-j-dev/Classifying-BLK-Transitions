@@ -1,5 +1,3 @@
-"""Dataset helpers for BLT phase transition experiments."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +7,6 @@ import numpy as np
 
 
 def load_split(split_path: Path | str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return (features, temperatures, labels) for a saved split."""
 
     split_path = Path(split_path)
     with np.load(split_path) as npz:

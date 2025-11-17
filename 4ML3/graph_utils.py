@@ -1,5 +1,3 @@
-"""Graph construction helpers for k-NN similarity graphs."""
-
 from __future__ import annotations
 
 from typing import Literal

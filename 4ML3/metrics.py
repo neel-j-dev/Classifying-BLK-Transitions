@@ -1,5 +1,3 @@
-"""Evaluation helpers for BLT phase transition experiments."""
-
 from __future__ import annotations
 
 import numpy as np

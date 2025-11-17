@@ -1,5 +1,3 @@
-"""Validation script for trained GNN models."""
-
 from __future__ import annotations
 
 import argparse

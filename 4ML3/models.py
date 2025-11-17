@@ -1,5 +1,3 @@
-"""Model factories for the BLT GNN experiments."""
-
 from __future__ import annotations
 
 from typing import Literal
