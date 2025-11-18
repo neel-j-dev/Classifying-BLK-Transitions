@@ -11,7 +11,7 @@ from pipeline import run_split
 
 def main():
     parser = argparse.ArgumentParser(description="Train a scikit-network GNN on BLT data.")
-    parser.add_argument("--dataset-dir", type=Path, default=Path("../blt_dataset"))
+    parser.add_argument("--dataset-dir", type=Path, default=Path("../XYModel/blt_dataset"))
     parser.add_argument("--model-type", choices=["gnn", "gat"], default="gnn")
     parser.add_argument("--n-neighbors", type=int, default=8)
     parser.add_argument("--metric", choices=["euclidean", "cosine"], default="euclidean")
