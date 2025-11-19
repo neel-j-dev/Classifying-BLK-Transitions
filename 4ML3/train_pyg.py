@@ -34,7 +34,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train and evaluate a PyTorch Geometric model on BLT data."
     )
-    parser.add_argument("--dataset-dir", type=Path, default=Path("../XYModel/blt_dataset"))
+    parser.add_argument("--dataset-dir", type=Path, default=Path("../blt_dataset_large"))
     parser.add_argument("--n-neighbors", type=int, default=8)
     parser.add_argument("--metric", choices=["euclidean", "cosine"], default="euclidean")
     parser.add_argument("--hidden-dim", type=int, default=32)
