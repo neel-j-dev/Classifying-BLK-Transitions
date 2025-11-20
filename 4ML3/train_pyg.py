@@ -184,7 +184,7 @@ def main():
     )
     parser.add_argument("--dataset-dir", type=Path, default=Path("../XYModel/blt_dataset"))
     parser.add_argument("--hidden-dim", type=int, default=64)
-    parser.add_argument("--num-layers", type=int, default=2)
+    parser.add_argument("--num-layers", type=int, default=5)
     parser.add_argument("--n-epochs", type=int, default=1600)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--dropout", type=float, default=0)
