@@ -63,6 +63,7 @@ def generate_samples(
     temp_targets: List[float] = []
 
     for temp in temps:
+        print(f"Generating samples at T={temp:.3f}...")
         beta = 1.0 / temp
         for _ in range(samples_per_temp):
             sim = XYModelMetropolisSimulation(
@@ -102,8 +103,8 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=Path("blt_dataset"))
     parser.add_argument("--min-temp", type=float, default=0.3)
     parser.add_argument("--max-temp", type=float, default=1.5)
-    parser.add_argument("--num-temps", type=int, default=100)
-    parser.add_argument("--samples-per-temp", type=int, default=12)
+    parser.add_argument("--num-temps", type=int, default=200)
+    parser.add_argument("--samples-per-temp", type=int, default=10)
     parser.add_argument("--lattice-size", type=int, default=20)
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--iters-per-step", type=int, default=120)
