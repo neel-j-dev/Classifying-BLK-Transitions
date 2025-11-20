@@ -1,9 +1,10 @@
 """Utility for building BLT transition datasets from the XY model simulation.
 
 This script relies on the original XY Metropolis simulation (xy.py) that lives
-outside the 4ML3 folder. It generates summary observables for many temperature
-points and stores pre-shuffled train/validation/test splits that will later be
-consumed by the GNN scripts living under 4ML3/.
+outside the 4ML3 folder. It now captures the full lattice configuration at each
+temperature, treating every lattice point as a graph node whose feature is the
+angular value at that position. The generated splits can be consumed by the GNN
+pipelines living under 4ML3/.
 """
 
 from __future__ import annotations
@@ -18,30 +19,11 @@ import numpy as np
 from xy import XYModelMetropolisSimulation
 
 
-def compute_observables(sim: XYModelMetropolisSimulation) -> np.ndarray:
-    """Return a vector of coarse observables from the last simulation state."""
+def extract_lattice_angles(sim: XYModelMetropolisSimulation) -> np.ndarray:
+    """Flatten the latest lattice snapshot into per-node angular features."""
 
-    angles = 2 * np.pi * sim.L
-    cos_vals = np.cos(angles)
-    sin_vals = np.sin(angles)
-    mag_x = np.mean(cos_vals)
-    mag_y = np.mean(sin_vals)
-    magnetization = np.sqrt(mag_x ** 2 + mag_y ** 2)
-
-    correlation_length = sim.get_correlation_length()
-    specific_heat = sim.get_specific_heat()
-    energy_density = sim.H / sim.L.size
-    angle_variance = np.var(sim.L)
-
-    return np.array([
-        mag_x,
-        mag_y,
-        magnetization,
-        correlation_length,
-        specific_heat,
-        energy_density,
-        angle_variance,
-    ])
+    angles = (2 * np.pi * sim.L).astype(np.float64)
+    return angles.reshape(-1)
 
 
 def generate_samples(
@@ -73,7 +55,7 @@ def generate_samples(
                 random_state=rng.integers(0, 1_000_000_000),
             )
             sim.simulate(steps=steps, iters_per_step=iters_per_step)
-            records.append(compute_observables(sim))
+            records.append(extract_lattice_angles(sim))
             temp_targets.append(temp)
 
     return np.vstack(records), np.array(temp_targets)
@@ -106,8 +88,8 @@ def main():
     parser.add_argument("--num-temps", type=int, default=200)
     parser.add_argument("--samples-per-temp", type=int, default=10)
     parser.add_argument("--lattice-size", type=int, default=20)
-    parser.add_argument("--steps", type=int, default=200)
-    parser.add_argument("--iters-per-step", type=int, default=120)
+    parser.add_argument("--steps", type=int, default=1)
+    parser.add_argument("--iters-per-step", type=int, default=20000)
     parser.add_argument("--critical-temp", type=float, default=0.89)
     parser.add_argument("--coupling", type=float, default=1.0)
     parser.add_argument("--train-ratio", type=float, default=0.7)
@@ -154,6 +136,9 @@ def main():
         "train_ratio": args.train_ratio,
         "val_ratio": args.val_ratio,
         "seed": args.seed,
+        "feature_type": "lattice_angles",
+        "feature_shape": lattice_shape,
+        "feature_length": int(features.shape[1]),
     }
 
     metadata_path = output_dir / "metadata.json"
