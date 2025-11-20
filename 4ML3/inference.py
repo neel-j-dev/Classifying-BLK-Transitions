@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, TransformerConv, global_mean_pool
 
 from data_utils import load_split
 from metrics import estimate_critical_temperature, phase_metrics
@@ -71,11 +71,13 @@ def make_graphs(features: np.ndarray, temps: np.ndarray, labels: np.ndarray, edg
         raise ValueError(f"Feature length {features.shape[1]} does not match lattice nodes {num_nodes}.")
 
     graphs: List[Data] = []
+    edge_attr = torch.ones(edge_index.size(1), 1, dtype=torch.float32)
     for x_arr, temp, label in zip(features, temps, labels):
         x = torch.from_numpy(x_arr.reshape(-1, 1)).float()
         data = Data(
             x=x,
             edge_index=edge_index,
+            edge_attr=edge_attr,
             y=torch.tensor(label, dtype=torch.long),
             temp=torch.tensor(temp, dtype=torch.float32),
         )
@@ -102,6 +104,57 @@ class GridGraphClassifier(nn.Module):
         for conv in self.convs:
             x = conv(x, edge_index)
             x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = global_mean_pool(x, batch)
+        return self.head(x)
+
+
+class AttentionLatticeClassifier(nn.Module):
+    """Attention-based classifier matching the train_pyg attention model."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        num_layers: int,
+        dropout: float,
+        temp_embed_dim: int = 8,
+        edge_attr_dim: int = 1,
+        heads: int = 2,
+    ):
+        super().__init__()
+        if num_layers < 1:
+            raise ValueError("num_layers must be at least 1.")
+        self.temp_mlp = nn.Sequential(
+            nn.Linear(1, temp_embed_dim),
+            nn.ReLU(),
+        )
+        dims = [input_dim + temp_embed_dim] + [hidden_dim] * num_layers
+        self.convs = nn.ModuleList()
+        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
+            self.convs.append(
+                TransformerConv(
+                    in_dim,
+                    out_dim,
+                    heads=heads,
+                    concat=False,
+                    dropout=dropout,
+                    edge_dim=edge_attr_dim,
+                )
+            )
+        self.dropout = dropout
+        self.head = nn.Linear(hidden_dim, 2)
+
+    def forward(self, data: Data):
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        if edge_attr is None:
+            edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
+        temp_emb = self.temp_mlp(data.temp.view(-1, 1))
+        temp_per_node = temp_emb[data.batch]
+        x = torch.cat([x, temp_per_node], dim=-1)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_attr)
+            x = F.elu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = global_mean_pool(x, batch)
         return self.head(x)
@@ -281,7 +334,11 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     artifact = joblib.load(args.artifact)
-    model_cfg = artifact.get("model_config", {"input_dim": 1, "hidden_dim": 64, "num_layers": 2, "dropout": 0.1})
+    model_cfg = artifact.get(
+        "model_config",
+        {"input_dim": 1, "hidden_dim": 64, "num_layers": 2, "dropout": 0.1, "temp_embed_dim": 8, "heads": 2},
+    )
+    model_type = artifact.get("model_type", "gcn")
 
     features, temps, labels = load_split(args.dataset)
     metadata = load_metadata(args.dataset)
@@ -296,12 +353,24 @@ def main():
     graphs = make_graphs(features, temps, labels, edge_index, lattice_shape)
 
     loader = DataLoader(graphs, batch_size=args.batch_size, shuffle=False)
-    model = GridGraphClassifier(
-        input_dim=model_cfg.get("input_dim", 1),
-        hidden_dim=model_cfg.get("hidden_dim", 64),
-        num_layers=model_cfg.get("num_layers", 2),
-        dropout=model_cfg.get("dropout", 0),
-    ).to(device)
+    model = None
+    if model_type == "attn":
+        model = AttentionLatticeClassifier(
+            input_dim=model_cfg.get("input_dim", 1),
+            hidden_dim=model_cfg.get("hidden_dim", 64),
+            num_layers=model_cfg.get("num_layers", 2),
+            dropout=model_cfg.get("dropout", 0.1),
+            temp_embed_dim=model_cfg.get("temp_embed_dim", 8),
+            edge_attr_dim=1,
+            heads=model_cfg.get("heads", 2),
+        ).to(device)
+    else:
+        model = GridGraphClassifier(
+            input_dim=model_cfg.get("input_dim", 1),
+            hidden_dim=model_cfg.get("hidden_dim", 64),
+            num_layers=model_cfg.get("num_layers", 2),
+            dropout=model_cfg.get("dropout", 0.1),
+        ).to(device)
     state_dict = artifact.get("model_state_dict")
     if state_dict is None:
         raise ValueError("Artifact is missing model_state_dict needed for inference.")

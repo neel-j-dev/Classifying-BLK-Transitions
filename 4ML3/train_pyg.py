@@ -12,7 +12,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, global_mean_pool
+from torch_geometric.nn import GCNConv, TransformerConv, global_mean_pool
 
 from data_utils import load_split
 from metrics import estimate_critical_temperature, phase_metrics
@@ -82,11 +82,18 @@ def make_graphs(
         )
 
     data_list: List[Data] = []
+    edge_attr = torch.ones(edge_index.size(1), 1, dtype=torch.float32)
     for x_arr, temp, label in zip(features, temps, labels):
         x = torch.from_numpy(x_arr.reshape(-1, 1)).float()
         y = torch.tensor(label, dtype=torch.long)
         temp_tensor = torch.tensor(temp, dtype=torch.float32)
-        data = Data(x=x, edge_index=edge_index, y=y, temp=temp_tensor)
+        data = Data(
+            x=x,
+            edge_index=edge_index,
+            edge_attr=edge_attr,
+            y=y,
+            temp=temp_tensor,
+        )
         data_list.append(data)
     return data_list
 
@@ -110,6 +117,57 @@ class GridGraphClassifier(nn.Module):
         for conv in self.convs:
             x = conv(x, edge_index)
             x = F.relu(x)
+            x = F.dropout(x, p=self.dropout, training=self.training)
+        x = global_mean_pool(x, batch)
+        return self.head(x)
+
+
+class AttentionLatticeClassifier(nn.Module):
+    """Attention-based classifier that uses node, edge, and graph-level temperature features."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        num_layers: int,
+        dropout: float,
+        temp_embed_dim: int = 8,
+        edge_attr_dim: int = 1,
+        heads: int = 2,
+    ):
+        super().__init__()
+        if num_layers < 1:
+            raise ValueError("num_layers must be at least 1.")
+        self.temp_mlp = nn.Sequential(
+            nn.Linear(1, temp_embed_dim),
+            nn.ReLU(),
+        )
+        dims: Sequence[int] = [input_dim + temp_embed_dim] + [hidden_dim] * num_layers
+        self.convs = nn.ModuleList()
+        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
+            self.convs.append(
+                TransformerConv(
+                    in_dim,
+                    out_dim,
+                    heads=heads,
+                    concat=False,
+                    dropout=dropout,
+                    edge_dim=edge_attr_dim,
+                )
+            )
+        self.dropout = dropout
+        self.head = nn.Linear(hidden_dim, 2)
+
+    def forward(self, data: Data):
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        if edge_attr is None:
+            edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
+        temp_emb = self.temp_mlp(data.temp.view(-1, 1))
+        temp_per_node = temp_emb[data.batch]
+        x = torch.cat([x, temp_per_node], dim=-1)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_attr)
+            x = F.elu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
         x = global_mean_pool(x, batch)
         return self.head(x)
@@ -183,15 +241,18 @@ def main():
         description="Train and evaluate a PyTorch Geometric model on lattice graphs (one graph per sample)."
     )
     parser.add_argument("--dataset-dir", type=Path, default=Path("../XYModel/blt_dataset"))
+    parser.add_argument("--model-type", choices=["gcn", "attn"], default="attn")
     parser.add_argument("--hidden-dim", type=int, default=64)
-    parser.add_argument("--num-layers", type=int, default=5)
-    parser.add_argument("--n-epochs", type=int, default=1600)
-    parser.add_argument("--batch-size", type=int, default=2048)
-    parser.add_argument("--dropout", type=float, default=0)
+    parser.add_argument("--num-layers", type=int, default=3)
+    parser.add_argument("--n-epochs", type=int, default=400)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--random-state", type=int, default=0)
     parser.add_argument("--artifact", type=Path, default=Path("artifacts/pyg_lattice_model.joblib"))
     parser.add_argument("--no-periodic", action="store_true", help="Disable periodic boundary edges.", default=True)
+    parser.add_argument("--temp-embed-dim", type=int, default=8)
+    parser.add_argument("--heads", type=int, default=2, help="Number of attention heads (attn model).")
     add_split_arg(parser, "val", "val.npz")
     add_split_arg(parser, "test", "test.npz")
     args = parser.parse_args()
@@ -232,12 +293,23 @@ def main():
     val_loader = DataLoader(val_graphs, batch_size=args.batch_size, shuffle=False) if val_graphs else None
     test_loader = DataLoader(test_graphs, batch_size=args.batch_size, shuffle=False) if test_graphs else None
 
-    model = GridGraphClassifier(
-        input_dim=1,
-        hidden_dim=args.hidden_dim,
-        num_layers=args.num_layers,
-        dropout=args.dropout,
-    ).to(device)
+    if args.model_type == "gcn":
+        model = GridGraphClassifier(
+            input_dim=1,
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+        ).to(device)
+    else:
+        model = AttentionLatticeClassifier(
+            input_dim=1,
+            hidden_dim=args.hidden_dim,
+            num_layers=args.num_layers,
+            dropout=args.dropout,
+            temp_embed_dim=args.temp_embed_dim,
+            edge_attr_dim=1,
+            heads=args.heads,
+        ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     for epoch in range(1, args.n_epochs + 1):
@@ -276,7 +348,10 @@ def main():
             "hidden_dim": args.hidden_dim,
             "num_layers": args.num_layers,
             "dropout": args.dropout,
+            "temp_embed_dim": args.temp_embed_dim,
+            "heads": args.heads,
         },
+        "model_type": args.model_type,
         "lattice_shape": lattice_shape,
         "periodic": periodic,
         "edge_index": edge_index,
