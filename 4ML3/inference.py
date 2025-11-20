@@ -109,8 +109,8 @@ class GridGraphClassifier(nn.Module):
         return self.head(x)
 
 
-class AttentionLatticeClassifier(nn.Module):
-    """Attention-based classifier matching the train_pyg attention model."""
+class AttentionLatticeRegressor(nn.Module):
+    """Attention-based regressor matching the train_pyg temperature model."""
 
     def __init__(
         self,
@@ -118,18 +118,13 @@ class AttentionLatticeClassifier(nn.Module):
         hidden_dim: int,
         num_layers: int,
         dropout: float,
-        temp_embed_dim: int = 8,
         edge_attr_dim: int = 1,
         heads: int = 2,
     ):
         super().__init__()
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1.")
-        self.temp_mlp = nn.Sequential(
-            nn.Linear(1, temp_embed_dim),
-            nn.ReLU(),
-        )
-        dims = [input_dim + temp_embed_dim] + [hidden_dim] * num_layers
+        dims = [input_dim] + [hidden_dim] * num_layers
         self.convs = nn.ModuleList()
         for in_dim, out_dim in zip(dims[:-1], dims[1:]):
             self.convs.append(
@@ -143,15 +138,12 @@ class AttentionLatticeClassifier(nn.Module):
                 )
             )
         self.dropout = dropout
-        self.head = nn.Linear(hidden_dim, 2)
+        self.head = nn.Linear(hidden_dim, 1)
 
     def forward(self, data: Data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
         if edge_attr is None:
             edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
-        temp_emb = self.temp_mlp(data.temp.view(-1, 1))
-        temp_per_node = temp_emb[data.batch]
-        x = torch.cat([x, temp_per_node], dim=-1)
         for conv in self.convs:
             x = conv(x, edge_index, edge_attr)
             x = F.elu(x)
@@ -165,14 +157,28 @@ def evaluate(model, loader, device):
     all_probs = []
     all_labels = []
     all_temps = []
+    all_pred_temps = []
     with torch.no_grad():
         for data in loader:
             data = data.to(device)
             logits = model(data)
-            probs = torch.softmax(logits, dim=-1)[:, 1]
-            all_probs.append(probs.cpu())
-            all_labels.append(data.y.view(-1).cpu())
-            all_temps.append(data.temp.view(-1).cpu())
+            if logits.shape[-1] == 1:
+                preds = logits.view(-1)
+                all_pred_temps.append(preds.cpu())
+                all_temps.append(data.temp.view(-1).cpu())
+            else:
+                probs = torch.softmax(logits, dim=-1)[:, 1]
+                all_probs.append(probs.cpu())
+                all_labels.append(data.y.view(-1).cpu())
+                all_temps.append(data.temp.view(-1).cpu())
+
+    if all_pred_temps:
+        preds_np = torch.cat(all_pred_temps).numpy()
+        temps_np = torch.cat(all_temps).numpy()
+        mae = float(np.mean(np.abs(preds_np - temps_np)))
+        rmse = float(np.sqrt(np.mean((preds_np - temps_np) ** 2)))
+        metrics = {"mae": mae, "rmse": rmse}
+        return preds_np, temps_np, temps_np, metrics
 
     if not all_probs:
         return np.array([]), np.array([]), np.array([]), {}
@@ -336,7 +342,7 @@ def main():
     artifact = joblib.load(args.artifact)
     model_cfg = artifact.get(
         "model_config",
-        {"input_dim": 1, "hidden_dim": 64, "num_layers": 2, "dropout": 0.1, "temp_embed_dim": 8, "heads": 2},
+        {"input_dim": 1, "hidden_dim": 64, "num_layers": 2, "dropout": 0.1, "heads": 2},
     )
     model_type = artifact.get("model_type", "gcn")
 
@@ -353,14 +359,12 @@ def main():
     graphs = make_graphs(features, temps, labels, edge_index, lattice_shape)
 
     loader = DataLoader(graphs, batch_size=args.batch_size, shuffle=False)
-    model = None
-    if model_type == "attn":
-        model = AttentionLatticeClassifier(
+    if model_type == "attn_temp":
+        model = AttentionLatticeRegressor(
             input_dim=model_cfg.get("input_dim", 1),
             hidden_dim=model_cfg.get("hidden_dim", 64),
             num_layers=model_cfg.get("num_layers", 2),
             dropout=model_cfg.get("dropout", 0.1),
-            temp_embed_dim=model_cfg.get("temp_embed_dim", 8),
             edge_attr_dim=1,
             heads=model_cfg.get("heads", 2),
         ).to(device)
@@ -376,30 +380,48 @@ def main():
         raise ValueError("Artifact is missing model_state_dict needed for inference.")
     model.load_state_dict(state_dict)
 
-    probs, labels_out, temps_out, _ = evaluate(model, loader, device)
-    true_tc = load_true_tc(args.dataset, args.true_tc)
-    probs_smoothed = smooth_probabilities(temps_out, probs)
-    t_c = estimate_critical_temperature(temps_out, probs_smoothed)
-    print(f"Estimated critical temperature (smoothed crossing): {t_c:.3f}")
-    if true_tc is not None:
-        print(f"Reference critical temperature: {true_tc:.3f}")
+    preds, labels_out, temps_out, metrics = evaluate(model, loader, device)
 
-    fig = plt.figure(figsize=(16, 8))
-    gs = fig.add_gridspec(2, 3, height_ratios=[1, 0.9])
-    ax_scatter = fig.add_subplot(gs[0, :2])
-    ax_heatmap = fig.add_subplot(gs[0, 2])
-    window_axes = [fig.add_subplot(gs[1, i]) for i in range(3)]
+    if model_type == "attn_temp":
+        mae = metrics.get("mae")
+        rmse = metrics.get("rmse")
+        print(f"Temperature regression -> MAE={mae:.4f} RMSE={rmse:.4f}")
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.scatter(temps_out, preds, s=35, alpha=0.8, edgecolor="black", linewidth=0.2, label="Predictions")
+        min_t = min(temps_out.min(), preds.min())
+        max_t = max(temps_out.max(), preds.max())
+        ax.plot([min_t, max_t], [min_t, max_t], color="#555555", linestyle="--", label="y=x")
+        ax.set_xlabel("True temperature")
+        ax.set_ylabel("Predicted temperature")
+        ax.legend()
+        fig.tight_layout()
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(args.output, dpi=200)
+        print(f"Saved regression scatter to {args.output}")
+    else:
+        true_tc = load_true_tc(args.dataset, args.true_tc)
+        probs_smoothed = smooth_probabilities(temps_out, preds)
+        t_c = estimate_critical_temperature(temps_out, probs_smoothed)
+        print(f"Estimated critical temperature (smoothed crossing): {t_c:.3f}")
+        if true_tc is not None:
+            print(f"Reference critical temperature: {true_tc:.3f}")
 
-    plot_probability_scatter(ax_scatter, temps_out, probs, labels_out, t_c, true_tc, method="smoothed crossing")
-    plot_probability_heatmap(ax_heatmap, temps_out, probs, labels_out)
-    plot_temperature_windows(window_axes, temps_out, probs, labels_out, t_c)
+        fig = plt.figure(figsize=(16, 8))
+        gs = fig.add_gridspec(2, 3, height_ratios=[1, 0.9])
+        ax_scatter = fig.add_subplot(gs[0, :2])
+        ax_heatmap = fig.add_subplot(gs[0, 2])
+        window_axes = [fig.add_subplot(gs[1, i]) for i in range(3)]
 
-    fig.suptitle("PyG lattice inference: probability view", fontsize=14)
-    fig.tight_layout()
+        plot_probability_scatter(ax_scatter, temps_out, preds, labels_out, t_c, true_tc, method="smoothed crossing")
+        plot_probability_heatmap(ax_heatmap, temps_out, preds, labels_out)
+        plot_temperature_windows(window_axes, temps_out, preds, labels_out, t_c)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(args.output, dpi=200)
-    print(f"Saved visualization to {args.output}")
+        fig.suptitle("PyG lattice inference: probability view", fontsize=14)
+        fig.tight_layout()
+
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(args.output, dpi=200)
+        print(f"Saved visualization to {args.output}")
 
 if __name__ == "__main__":
     main()

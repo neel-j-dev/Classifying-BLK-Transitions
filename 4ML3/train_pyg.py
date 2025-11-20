@@ -123,7 +123,7 @@ class GridGraphClassifier(nn.Module):
 
 
 class AttentionLatticeClassifier(nn.Module):
-    """Attention-based classifier that uses node, edge, and graph-level temperature features."""
+    """Attention-based temperature regressor that uses node + edge features (no graph-level temp input)."""
 
     def __init__(
         self,
@@ -131,18 +131,13 @@ class AttentionLatticeClassifier(nn.Module):
         hidden_dim: int,
         num_layers: int,
         dropout: float,
-        temp_embed_dim: int = 8,
         edge_attr_dim: int = 1,
         heads: int = 2,
     ):
         super().__init__()
         if num_layers < 1:
             raise ValueError("num_layers must be at least 1.")
-        self.temp_mlp = nn.Sequential(
-            nn.Linear(1, temp_embed_dim),
-            nn.ReLU(),
-        )
-        dims: Sequence[int] = [input_dim + temp_embed_dim] + [hidden_dim] * num_layers
+        dims: Sequence[int] = [input_dim] + [hidden_dim] * num_layers
         self.convs = nn.ModuleList()
         for in_dim, out_dim in zip(dims[:-1], dims[1:]):
             self.convs.append(
@@ -156,15 +151,12 @@ class AttentionLatticeClassifier(nn.Module):
                 )
             )
         self.dropout = dropout
-        self.head = nn.Linear(hidden_dim, 2)
+        self.head = nn.Linear(hidden_dim, 1)
 
     def forward(self, data: Data):
         x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
         if edge_attr is None:
             edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
-        temp_emb = self.temp_mlp(data.temp.view(-1, 1))
-        temp_per_node = temp_emb[data.batch]
-        x = torch.cat([x, temp_per_node], dim=-1)
         for conv in self.convs:
             x = conv(x, edge_index, edge_attr)
             x = F.elu(x)
@@ -181,7 +173,10 @@ def train_one_epoch(model, loader, optimizer, device) -> float:
         data = data.to(device)
         optimizer.zero_grad()
         logits = model(data)
-        loss = F.cross_entropy(logits, data.y.view(-1))
+        if logits.shape[-1] == 1:
+            loss = F.mse_loss(logits.view(-1), data.temp.view(-1))
+        else:
+            loss = F.cross_entropy(logits, data.y.view(-1))
         loss.backward()
         optimizer.step()
         total_loss += float(loss.item()) * data.num_graphs
@@ -194,14 +189,28 @@ def evaluate(model, loader, device):
     all_probs = []
     all_labels = []
     all_temps = []
+    all_pred_temps = []
     with torch.no_grad():
         for data in loader:
             data = data.to(device)
             logits = model(data)
-            probs = torch.softmax(logits, dim=-1)[:, 1]
-            all_probs.append(probs.cpu())
-            all_labels.append(data.y.view(-1).cpu())
-            all_temps.append(data.temp.view(-1).cpu())
+            if logits.shape[-1] == 1:
+                preds = logits.view(-1)
+                all_pred_temps.append(preds.cpu())
+                all_temps.append(data.temp.view(-1).cpu())
+            else:
+                probs = torch.softmax(logits, dim=-1)[:, 1]
+                all_probs.append(probs.cpu())
+                all_labels.append(data.y.view(-1).cpu())
+                all_temps.append(data.temp.view(-1).cpu())
+
+    if all_pred_temps:
+        preds_np = torch.cat(all_pred_temps).numpy()
+        temps_np = torch.cat(all_temps).numpy()
+        mae = float(np.mean(np.abs(preds_np - temps_np)))
+        rmse = float(np.sqrt(np.mean((preds_np - temps_np) ** 2)))
+        metrics = {"mae": mae, "rmse": rmse}
+        return preds_np, temps_np, temps_np, metrics
 
     if not all_probs:
         return np.array([]), np.array([]), np.array([]), {}
@@ -229,11 +238,17 @@ def resolve_split_path(dataset_dir: Path, cli_path: Path | None, filename: str) 
 
 
 def print_metrics(metrics: dict):
-    print(
-        f"[{metrics['split']}] accuracy={metrics['accuracy']:.3f} "
-        f"f1={metrics['f1']:.3f} t_c={metrics['t_c']:.3f} "
-        f"roc_auc={metrics['roc_auc']:.3f}"
-    )
+    if "accuracy" in metrics:
+        print(
+            f"[{metrics['split']}] accuracy={metrics['accuracy']:.3f} "
+            f"f1={metrics['f1']:.3f} t_c={metrics['t_c']:.3f} "
+            f"roc_auc={metrics['roc_auc']:.3f}"
+        )
+    else:
+        print(
+            f"[{metrics['split']}] mae={metrics['mae']:.4f} "
+            f"rmse={metrics['rmse']:.4f}"
+        )
 
 
 def main():
@@ -241,7 +256,8 @@ def main():
         description="Train and evaluate a PyTorch Geometric model on lattice graphs (one graph per sample)."
     )
     parser.add_argument("--dataset-dir", type=Path, default=Path("../XYModel/blt_dataset"))
-    parser.add_argument("--model-type", choices=["gcn", "attn"], default="attn")
+    parser.add_argument("--model-type", choices=["gcn", "attn_temp"], default="attn_temp",
+                        help="gcn=phase classifier, attn_temp=attention regressor for temperature.")
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--n-epochs", type=int, default=400)
@@ -251,7 +267,6 @@ def main():
     parser.add_argument("--random-state", type=int, default=0)
     parser.add_argument("--artifact", type=Path, default=Path("artifacts/pyg_lattice_model.joblib"))
     parser.add_argument("--no-periodic", action="store_true", help="Disable periodic boundary edges.", default=True)
-    parser.add_argument("--temp-embed-dim", type=int, default=8)
     parser.add_argument("--heads", type=int, default=2, help="Number of attention heads (attn model).")
     add_split_arg(parser, "val", "val.npz")
     add_split_arg(parser, "test", "test.npz")
@@ -306,7 +321,6 @@ def main():
             hidden_dim=args.hidden_dim,
             num_layers=args.num_layers,
             dropout=args.dropout,
-            temp_embed_dim=args.temp_embed_dim,
             edge_attr_dim=1,
             heads=args.heads,
         ).to(device)
@@ -319,7 +333,10 @@ def main():
             if val_loader is not None:
                 _, _, _, val_metrics = evaluate(model, val_loader, device)
                 if val_metrics:
-                    msg += f" val_acc={val_metrics['accuracy']:.3f} val_f1={val_metrics['f1']:.3f}"
+                    if "accuracy" in val_metrics:
+                        msg += f" val_acc={val_metrics['accuracy']:.3f} val_f1={val_metrics['f1']:.3f}"
+                    else:
+                        msg += f" val_mae={val_metrics['mae']:.4f} val_rmse={val_metrics['rmse']:.4f}"
             print(msg)
 
     metrics_list = []
@@ -348,7 +365,6 @@ def main():
             "hidden_dim": args.hidden_dim,
             "num_layers": args.num_layers,
             "dropout": args.dropout,
-            "temp_embed_dim": args.temp_embed_dim,
             "heads": args.heads,
         },
         "model_type": args.model_type,
