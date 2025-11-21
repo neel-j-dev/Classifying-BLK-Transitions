@@ -9,6 +9,9 @@ import torch
 from torch_geometric.data import Data
 
 
+# -------------------------------
+# Dataset Metadata and Lattice Utilities
+# -------------------------------
 def load_metadata(dataset_dir: Path | str) -> Optional[Dict]:
     """Load dataset metadata.json if present."""
 
@@ -19,6 +22,10 @@ def load_metadata(dataset_dir: Path | str) -> Optional[Dict]:
             return json.load(f)
     return None
 
+
+# -------------------------------
+# Lattice Graph Utilities
+# -------------------------------
 
 def infer_lattice_shape(num_features: int, metadata: Optional[dict]) -> Tuple[int, int]:
     """Infer lattice shape from metadata or assume square from feature length."""

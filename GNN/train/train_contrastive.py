@@ -11,11 +11,14 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
-from data_utils import load_split
-from lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
+from GNN.utils.data_utils import load_split
+from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
 from models import build_contrastive_lattice_model
 
 
+# -------------------------------
+# Augmentation for Contrastive Graphs
+# -------------------------------
 def augment_graph(data: Data, noise_std: float) -> Data:
     """Simple augmentation: add Gaussian noise to node features."""
 
@@ -29,6 +32,9 @@ def augment_graph(data: Data, noise_std: float) -> Data:
     )
 
 
+# -------------------------------
+# Training loop for Contrastive Graphs
+# -------------------------------
 def train_epoch(model, loader, optimizer, device, noise_std: float) -> float:
     model.train()
     total_loss = 0.0

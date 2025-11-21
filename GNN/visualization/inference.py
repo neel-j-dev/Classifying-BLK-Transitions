@@ -12,10 +12,10 @@ import numpy as np
 import torch
 from torch_geometric.loader import DataLoader
 
-from data_utils import load_split
-from lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
-from metrics import estimate_critical_temperature, phase_metrics
-from models import build_pyg_lattice_model
+from GNN.utils.data_utils import load_split
+from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
+from GNN.utils.metrics import estimate_critical_temperature, phase_metrics
+from GNN.models.models import build_pyg_lattice_model
 import json
 
 def evaluate(model, loader, device):

@@ -10,12 +10,15 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.loader import DataLoader
 
-from data_utils import load_split
-from lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
-from metrics import estimate_critical_temperature, phase_metrics
-from models import build_pyg_lattice_model
+from GNN.utils.data_utils import load_split
+from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
+from GNN.utils.metrics import estimate_critical_temperature, phase_metrics
+from GNN.models.models import build_pyg_lattice_model
 
 
+# -------------------------------
+# Training loop for Prediction Lattice Graphs
+# -------------------------------
 def train_one_epoch(model, loader, optimizer, device) -> float:
     model.train()
     total_loss = 0.0
@@ -35,6 +38,9 @@ def train_one_epoch(model, loader, optimizer, device) -> float:
     return total_loss / max(1, total_graphs)
 
 
+# -------------------------------
+# Evaluation loop for Prediction Lattice Graphs
+# -------------------------------
 def evaluate(model, loader, device):
     model.eval()
     all_probs = []

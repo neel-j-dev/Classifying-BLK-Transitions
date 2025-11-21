@@ -14,9 +14,9 @@ from torch_geometric.loader import DataLoader
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 
-from data_utils import load_split
-from lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
-from models import build_contrastive_lattice_model
+from GNN.utils.data_utils import load_split
+from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
+from GNN.models.models import build_contrastive_lattice_model
 
 
 def main():

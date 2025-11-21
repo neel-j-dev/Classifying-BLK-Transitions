@@ -12,6 +12,9 @@ from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv, TransformerConv, global_mean_pool
 
 
+# -------------------------------
+# Legacy GNN classifiers
+# -------------------------------
 def build_model(
     model_type: Literal["gnn", "pyg"],
     input_dim: int,
@@ -52,6 +55,10 @@ def build_model(
     raise ValueError(f"Unsupported model_type='{model_type}'.")
 
 
+
+# -------------------------------
+# PyTorch Geometric wrapper
+# -------------------------------
 class PyGClassifier:
     """Thin wrapper that imitates the scikit-network API using PyTorch Geometric."""
 
@@ -128,6 +135,9 @@ class PyGClassifier:
         return self._probabilities
 
 
+# -------------------------------
+# PyG PhaseNet model
+# -------------------------------
 class PyGPhaseNet(nn.Module):
     """Simple stack of GCNConv layers driven by the existing dims/activations config."""
 
@@ -178,10 +188,8 @@ def _activation_from_name(name: str) -> nn.Module:
 
 
 # -------------------------------
-# Lattice graph model components
+# Lattice Graph Convolutional Model
 # -------------------------------
-
-
 class GridGraphClassifier(nn.Module):
     """GCN-based graph-level classifier used by train_pyg/inference/plot_pca."""
 
@@ -214,6 +222,9 @@ class GridGraphClassifier(nn.Module):
         return x
 
 
+# -------------------------------
+# Attention-based Lattice Graph Regressor
+# -------------------------------
 class AttentionLatticeRegressor(nn.Module):
     """Attention-based graph regressor that predicts temperature directly."""
 
@@ -270,6 +281,9 @@ class AttentionLatticeRegressor(nn.Module):
         return x
 
 
+# -------------------------------
+# Build Prediction Lattice Models
+# -------------------------------
 def build_pyg_lattice_model(
     model_type: Literal["gcn", "attn_temp"],
     input_dim: int,
@@ -299,6 +313,9 @@ def build_pyg_lattice_model(
     raise ValueError(f"Unsupported lattice model_type '{model_type}'.")
 
 
+# -------------------------------
+# Contrastive Lattice Encoder
+# -------------------------------
 class ContrastiveLatticeEncoder(nn.Module):
     """GCN-based encoder with projection head for contrastive learning on lattice graphs."""
 
@@ -351,6 +368,9 @@ class ContrastiveLatticeEncoder(nn.Module):
         return 0.5 * (loss12 + loss21)
 
 
+# -------------------------------
+# Contrastive Lattice Encoder Builder
+# -------------------------------
 def build_contrastive_lattice_model(
     input_dim: int,
     hidden_dim: int,
