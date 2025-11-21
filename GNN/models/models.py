@@ -326,6 +326,8 @@ class ContrastiveLatticeEncoder(nn.Module):
         num_layers: int,
         projection_dim: int = 64,
         dropout: float = 0.1,
+        heads: int = 2,
+        edge_attr_dim: int = 1
     ):
         super().__init__()
         if num_layers < 1:
@@ -333,7 +335,14 @@ class ContrastiveLatticeEncoder(nn.Module):
         self.convs = nn.ModuleList()
         dims = [input_dim] + [hidden_dim] * num_layers
         for in_dim, out_dim in zip(dims[:-1], dims[1:]):
-            self.convs.append(GCNConv(in_dim, out_dim, add_self_loops=False, normalize=True))
+            self.convs.append(TransformerConv(
+                    in_dim,
+                    out_dim,
+                    heads=heads,
+                    concat=False,
+                    dropout=dropout,
+                    edge_dim=edge_attr_dim,
+                ))
         self.dropout = dropout
         self.projection = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
@@ -342,9 +351,11 @@ class ContrastiveLatticeEncoder(nn.Module):
         )
 
     def embed(self, data: Data) -> torch.Tensor:
-        x, edge_index, batch = data.x, data.edge_index, data.batch
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        if edge_attr is None:
+            edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
         for conv in self.convs:
-            x = conv(x, edge_index)
+            x = conv(x, edge_index, edge_attr)
             x = nn.functional.relu(x)
             x = nn.functional.dropout(x, p=self.dropout, training=self.training)
         x = global_mean_pool(x, batch)
