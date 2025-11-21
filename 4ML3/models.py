@@ -297,3 +297,73 @@ def build_pyg_lattice_model(
             heads=heads,
         )
     raise ValueError(f"Unsupported lattice model_type '{model_type}'.")
+
+
+class ContrastiveLatticeEncoder(nn.Module):
+    """GCN-based encoder with projection head for contrastive learning on lattice graphs."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        num_layers: int,
+        projection_dim: int = 64,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        if num_layers < 1:
+            raise ValueError("num_layers must be at least 1.")
+        self.convs = nn.ModuleList()
+        dims = [input_dim] + [hidden_dim] * num_layers
+        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
+            self.convs.append(GCNConv(in_dim, out_dim, add_self_loops=False, normalize=True))
+        self.dropout = dropout
+        self.projection = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, projection_dim),
+        )
+
+    def embed(self, data: Data) -> torch.Tensor:
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        for conv in self.convs:
+            x = conv(x, edge_index)
+            x = nn.functional.relu(x)
+            x = nn.functional.dropout(x, p=self.dropout, training=self.training)
+        x = global_mean_pool(x, batch)
+        return x
+
+    def project(self, embeddings: torch.Tensor) -> torch.Tensor:
+        z = self.projection(embeddings)
+        return nn.functional.normalize(z, p=2, dim=-1)
+
+    def forward(self, data: Data) -> torch.Tensor:
+        return self.project(self.embed(data))
+
+    @staticmethod
+    def info_nce_loss(z1: torch.Tensor, z2: torch.Tensor, temperature: float = 0.2) -> torch.Tensor:
+        z1 = nn.functional.normalize(z1, dim=-1)
+        z2 = nn.functional.normalize(z2, dim=-1)
+        sim = torch.matmul(z1, z2.T) / temperature
+        targets = torch.arange(z1.size(0), device=z1.device)
+        loss12 = nn.functional.cross_entropy(sim, targets)
+        loss21 = nn.functional.cross_entropy(sim.T, targets)
+        return 0.5 * (loss12 + loss21)
+
+
+def build_contrastive_lattice_model(
+    input_dim: int,
+    hidden_dim: int,
+    num_layers: int,
+    projection_dim: int = 64,
+    dropout: float = 0.1,
+) -> ContrastiveLatticeEncoder:
+    """Factory for the contrastive lattice encoder."""
+
+    return ContrastiveLatticeEncoder(
+        input_dim=input_dim,
+        hidden_dim=hidden_dim,
+        num_layers=num_layers,
+        projection_dim=projection_dim,
+        dropout=dropout,
+    )
