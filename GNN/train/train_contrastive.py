@@ -12,8 +12,13 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 from GNN.utils.data_utils import load_split
-from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
-from models import build_contrastive_lattice_model
+from GNN.utils.lattice_utils import (
+    build_lattice_edge_index,
+    infer_lattice_shape,
+    load_metadata,
+    make_lattice_graphs,
+)
+from GNN.models.models import build_contrastive_lattice_model
 
 
 # -------------------------------
@@ -60,8 +65,8 @@ def train_epoch(model, loader, optimizer, device, noise_std: float) -> float:
 
 def main():
     parser = argparse.ArgumentParser(description="Contrastive training for lattice graph encoder.")
-    parser.add_argument("--dataset", type=Path, default=Path("../XYModel/blt_dataset/train.npz"))
-    parser.add_argument("--output", type=Path, default=Path("artifacts/contrastive_model.joblib"))
+    parser.add_argument("--dataset", type=Path, default=Path("XYModel/blt_dataset/train.npz"))
+    parser.add_argument("--output", type=Path, default=Path("GNN/artifacts/contrastive_model.joblib"))
     parser.add_argument("--hidden-dim", type=int, default=128)
     parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--projection-dim", type=int, default=64)

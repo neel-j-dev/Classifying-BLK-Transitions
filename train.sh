@@ -1,0 +1,1 @@
+python -m GNN.train.train_contrastivea --dataset XYModel/blt_dataset/train.npz --output GNN/artifacts/contrastive_model.joblib --hidden-dim 128 --num-layers 3 --projection-dim 64

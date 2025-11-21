@@ -5,8 +5,8 @@ from pathlib import Path
 
 import joblib
 
-from data_utils import FEATURE_NAMES
-from pipeline import run_split
+from GNN.utils.data_utils import FEATURE_NAMES
+from GNN.__legacy__.pipeline import run_split
 
 
 def main():

@@ -22,7 +22,7 @@ from torch_geometric.loader import DataLoader
 
 from GNN.utils.data_utils import load_split
 from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
-from models import build_pyg_lattice_model
+from GNN.models.models import build_pyg_lattice_model
 
 
 def compute_embeddings(model: torch.nn.Module, loader: DataLoader, device: torch.device) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from pipeline import run_split
+from GNN.__legacy__.pipeline import run_split
 
 
 def main():

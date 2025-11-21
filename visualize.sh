@@ -1,0 +1,1 @@
+python -m GNN.train.train_contrastive

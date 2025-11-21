@@ -6,10 +6,10 @@ from typing import Optional, Tuple
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 
-from data_utils import load_split
-from graph_utils import build_knn_graph
-from metrics import estimate_critical_temperature, phase_metrics
-from models import build_model
+from GNN.utils.data_utils import load_split
+from GNN.__legacy__.graph_utils import build_knn_graph
+from GNN.utils.metrics import estimate_critical_temperature, phase_metrics
+from GNN.models.models import build_model
 
 
 def run_split(
