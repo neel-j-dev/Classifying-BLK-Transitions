@@ -9,25 +9,27 @@ from sknetwork.gnn import GNNClassifier
 import torch
 from torch import nn
 from torch_geometric.data import Data
-from torch_geometric.nn import GCNConv
+from torch_geometric.nn import GCNConv, TransformerConv, global_mean_pool
 
 
 def build_model(
-    model_type: Literal["gnn", "gat"],
+    model_type: Literal["gnn", "pyg"],
     input_dim: int,
     hidden_dim: int,
     n_epochs: int,
     learning_rate: float,
     random_state: int,
 ):
+    """Factory for legacy scikit-network GNN/GAT classifiers."""
+
     dims = [hidden_dim, hidden_dim, 2]
     activations = ["ReLu", "ReLu", "Identity"]
     common_kwargs = {
         "dims": dims,
         "activations": activations,
         "learning_rate": learning_rate,
-        #"n_epochs": n_epochs,
-        #"random_state": random_state,
+        # "n_epochs": n_epochs,
+        # "random_state": random_state,
         "use_bias": True,
         "self_embeddings": True,
         "verbose": False,
@@ -39,7 +41,7 @@ def build_model(
             layer_types=["Conv", "Conv", "Conv"],
             normalizations=["both", "both", "both"],
         )
-    elif model_type == "pyg":
+    if model_type == "pyg":
         return PyGClassifier(
             dims=dims,
             activations=activations,
@@ -47,8 +49,7 @@ def build_model(
             n_epochs=n_epochs,
             random_state=random_state,
         )
-    else:
-        raise ValueError(f"Unsupported model_type='{model_type}'.")
+    raise ValueError(f"Unsupported model_type='{model_type}'.")
 
 
 class PyGClassifier:
@@ -62,6 +63,8 @@ class PyGClassifier:
         n_epochs: int,
         random_state: int,
     ):
+        if torch is None:
+            raise ImportError("PyTorch and torch_geometric are required for PyGClassifier.")
         if len(dims) != len(activations):
             raise ValueError("dims and activations must have matching lengths.")
 
@@ -172,3 +175,125 @@ def _activation_from_name(name: str) -> nn.Module:
     if key not in activations:
         raise ValueError(f"Unsupported activation '{name}'.")
     return activations[key]
+
+
+# -------------------------------
+# Lattice graph model components
+# -------------------------------
+
+
+class GridGraphClassifier(nn.Module):
+    """GCN-based graph-level classifier used by train_pyg/inference/plot_pca."""
+
+    def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, dropout: float):
+        super().__init__()
+        if num_layers < 1:
+            raise ValueError("num_layers must be at least 1.")
+        self.convs = nn.ModuleList()
+        dims = [input_dim] + [hidden_dim] * num_layers
+        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
+            self.convs.append(GCNConv(in_dim, out_dim, add_self_loops=False, normalize=True))
+        self.dropout = dropout
+        self.head = nn.Linear(hidden_dim, 2)
+
+    def forward(self, data: Data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        for conv in self.convs:
+            x = conv(x, edge_index)
+            x = nn.functional.relu(x)
+            x = nn.functional.dropout(x, p=self.dropout, training=self.training)
+        x = global_mean_pool(x, batch)
+        return self.head(x)
+
+    def embed(self, data: Data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        for conv in self.convs:
+            x = conv(x, edge_index)
+            x = nn.functional.relu(x)
+        x = global_mean_pool(x, batch)
+        return x
+
+
+class AttentionLatticeRegressor(nn.Module):
+    """Attention-based graph regressor that predicts temperature directly."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int,
+        num_layers: int,
+        dropout: float,
+        edge_attr_dim: int = 1,
+        heads: int = 2,
+    ):
+        super().__init__()
+        if num_layers < 1:
+            raise ValueError("num_layers must be at least 1.")
+        if TransformerConv is None:
+            raise ImportError("torch_geometric is required for attention models.")
+
+        self.convs = nn.ModuleList()
+        dims = [input_dim] + [hidden_dim] * num_layers
+        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
+            self.convs.append(
+                TransformerConv(
+                    in_dim,
+                    out_dim,
+                    heads=heads,
+                    concat=False,
+                    dropout=dropout,
+                    edge_dim=edge_attr_dim,
+                )
+            )
+        self.dropout = dropout
+        self.head = nn.Linear(hidden_dim, 1)
+
+    def forward(self, data: Data):
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        if edge_attr is None:
+            edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_attr)
+            x = nn.functional.elu(x)
+            x = nn.functional.dropout(x, p=self.dropout, training=self.training)
+        x = global_mean_pool(x, batch)
+        return self.head(x)
+
+    def embed(self, data: Data):
+        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
+        if edge_attr is None:
+            edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
+        for conv in self.convs:
+            x = conv(x, edge_index, edge_attr)
+            x = nn.functional.elu(x)
+        x = global_mean_pool(x, batch)
+        return x
+
+
+def build_pyg_lattice_model(
+    model_type: Literal["gcn", "attn_temp"],
+    input_dim: int,
+    hidden_dim: int,
+    num_layers: int,
+    dropout: float,
+    heads: int = 2,
+) -> nn.Module:
+    """Factory for lattice graph models used across training/inference/PCA."""
+
+    if model_type == "gcn":
+        return GridGraphClassifier(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            dropout=dropout,
+        )
+    if model_type == "attn_temp":
+        return AttentionLatticeRegressor(
+            input_dim=input_dim,
+            hidden_dim=hidden_dim,
+            num_layers=num_layers,
+            dropout=dropout,
+            edge_attr_dim=1,
+            heads=heads,
+        )
+    raise ValueError(f"Unsupported lattice model_type '{model_type}'.")

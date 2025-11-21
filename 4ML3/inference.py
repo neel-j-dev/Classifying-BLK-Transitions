@@ -11,14 +11,12 @@ import joblib
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn.functional as F
-from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, TransformerConv, global_mean_pool
 
 from data_utils import load_split
 from metrics import estimate_critical_temperature, phase_metrics
+from models import build_pyg_lattice_model
 
 
 def load_metadata(dataset_path: Path) -> dict | None:
@@ -83,73 +81,6 @@ def make_graphs(features: np.ndarray, temps: np.ndarray, labels: np.ndarray, edg
         )
         graphs.append(data)
     return graphs
-
-
-class GridGraphClassifier(nn.Module):
-    """GCN-based graph classifier; mirrors train_pyg configuration."""
-
-    def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, dropout: float):
-        super().__init__()
-        if num_layers < 1:
-            raise ValueError("num_layers must be at least 1.")
-        self.convs = nn.ModuleList()
-        dims = [input_dim] + [hidden_dim] * num_layers
-        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
-            self.convs.append(GCNConv(in_dim, out_dim, add_self_loops=False, normalize=True))
-        self.dropout = dropout
-        self.head = nn.Linear(hidden_dim, 2)
-
-    def forward(self, data: Data):
-        x, edge_index, batch = data.x, data.edge_index, data.batch
-        for conv in self.convs:
-            x = conv(x, edge_index)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        x = global_mean_pool(x, batch)
-        return self.head(x)
-
-
-class AttentionLatticeRegressor(nn.Module):
-    """Attention-based regressor matching the train_pyg temperature model."""
-
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dim: int,
-        num_layers: int,
-        dropout: float,
-        edge_attr_dim: int = 1,
-        heads: int = 2,
-    ):
-        super().__init__()
-        if num_layers < 1:
-            raise ValueError("num_layers must be at least 1.")
-        dims = [input_dim] + [hidden_dim] * num_layers
-        self.convs = nn.ModuleList()
-        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
-            self.convs.append(
-                TransformerConv(
-                    in_dim,
-                    out_dim,
-                    heads=heads,
-                    concat=False,
-                    dropout=dropout,
-                    edge_dim=edge_attr_dim,
-                )
-            )
-        self.dropout = dropout
-        self.head = nn.Linear(hidden_dim, 1)
-
-    def forward(self, data: Data):
-        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
-        if edge_attr is None:
-            edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
-        for conv in self.convs:
-            x = conv(x, edge_index, edge_attr)
-            x = F.elu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        x = global_mean_pool(x, batch)
-        return self.head(x)
 
 
 def evaluate(model, loader, device):
@@ -359,22 +290,14 @@ def main():
     graphs = make_graphs(features, temps, labels, edge_index, lattice_shape)
 
     loader = DataLoader(graphs, batch_size=args.batch_size, shuffle=False)
-    if model_type == "attn_temp":
-        model = AttentionLatticeRegressor(
-            input_dim=model_cfg.get("input_dim", 1),
-            hidden_dim=model_cfg.get("hidden_dim", 64),
-            num_layers=model_cfg.get("num_layers", 2),
-            dropout=model_cfg.get("dropout", 0.1),
-            edge_attr_dim=1,
-            heads=model_cfg.get("heads", 2),
-        ).to(device)
-    else:
-        model = GridGraphClassifier(
-            input_dim=model_cfg.get("input_dim", 1),
-            hidden_dim=model_cfg.get("hidden_dim", 64),
-            num_layers=model_cfg.get("num_layers", 2),
-            dropout=model_cfg.get("dropout", 0.1),
-        ).to(device)
+    model = build_pyg_lattice_model(
+        model_type=model_type,
+        input_dim=model_cfg.get("input_dim", 1),
+        hidden_dim=model_cfg.get("hidden_dim", 64),
+        num_layers=model_cfg.get("num_layers", 2),
+        dropout=model_cfg.get("dropout", 0.1),
+        heads=model_cfg.get("heads", 2),
+    ).to(device)
     state_dict = artifact.get("model_state_dict")
     if state_dict is None:
         raise ValueError("Artifact is missing model_state_dict needed for inference.")

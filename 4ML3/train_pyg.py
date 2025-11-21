@@ -3,19 +3,18 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Tuple
 
 import joblib
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import nn
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import GCNConv, TransformerConv, global_mean_pool
 
 from data_utils import load_split
 from metrics import estimate_critical_temperature, phase_metrics
+from models import build_pyg_lattice_model
 
 
 def load_metadata(dataset_dir: Path) -> dict | None:
@@ -96,73 +95,6 @@ def make_graphs(
         )
         data_list.append(data)
     return data_list
-
-
-class GridGraphClassifier(nn.Module):
-    """GCN-based graph classifier with global mean pooling."""
-
-    def __init__(self, input_dim: int, hidden_dim: int, num_layers: int, dropout: float):
-        super().__init__()
-        if num_layers < 1:
-            raise ValueError("num_layers must be at least 1.")
-        self.convs = nn.ModuleList()
-        dims: Sequence[int] = [input_dim] + [hidden_dim] * num_layers
-        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
-            self.convs.append(GCNConv(in_dim, out_dim, add_self_loops=False, normalize=True))
-        self.dropout = dropout
-        self.head = nn.Linear(hidden_dim, 2)
-
-    def forward(self, data: Data):
-        x, edge_index, batch = data.x, data.edge_index, data.batch
-        for conv in self.convs:
-            x = conv(x, edge_index)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        x = global_mean_pool(x, batch)
-        return self.head(x)
-
-
-class AttentionLatticeClassifier(nn.Module):
-    """Attention-based temperature regressor that uses node + edge features (no graph-level temp input)."""
-
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dim: int,
-        num_layers: int,
-        dropout: float,
-        edge_attr_dim: int = 1,
-        heads: int = 2,
-    ):
-        super().__init__()
-        if num_layers < 1:
-            raise ValueError("num_layers must be at least 1.")
-        dims: Sequence[int] = [input_dim] + [hidden_dim] * num_layers
-        self.convs = nn.ModuleList()
-        for in_dim, out_dim in zip(dims[:-1], dims[1:]):
-            self.convs.append(
-                TransformerConv(
-                    in_dim,
-                    out_dim,
-                    heads=heads,
-                    concat=False,
-                    dropout=dropout,
-                    edge_dim=edge_attr_dim,
-                )
-            )
-        self.dropout = dropout
-        self.head = nn.Linear(hidden_dim, 1)
-
-    def forward(self, data: Data):
-        x, edge_index, edge_attr, batch = data.x, data.edge_index, data.edge_attr, data.batch
-        if edge_attr is None:
-            edge_attr = torch.ones(edge_index.size(1), 1, device=x.device, dtype=x.dtype)
-        for conv in self.convs:
-            x = conv(x, edge_index, edge_attr)
-            x = F.elu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        x = global_mean_pool(x, batch)
-        return self.head(x)
 
 
 def train_one_epoch(model, loader, optimizer, device) -> float:
@@ -308,22 +240,14 @@ def main():
     val_loader = DataLoader(val_graphs, batch_size=args.batch_size, shuffle=False) if val_graphs else None
     test_loader = DataLoader(test_graphs, batch_size=args.batch_size, shuffle=False) if test_graphs else None
 
-    if args.model_type == "gcn":
-        model = GridGraphClassifier(
-            input_dim=1,
-            hidden_dim=args.hidden_dim,
-            num_layers=args.num_layers,
-            dropout=args.dropout,
-        ).to(device)
-    else:
-        model = AttentionLatticeClassifier(
-            input_dim=1,
-            hidden_dim=args.hidden_dim,
-            num_layers=args.num_layers,
-            dropout=args.dropout,
-            edge_attr_dim=1,
-            heads=args.heads,
-        ).to(device)
+    model = build_pyg_lattice_model(
+        model_type=args.model_type,
+        input_dim=1,
+        hidden_dim=args.hidden_dim,
+        num_layers=args.num_layers,
+        dropout=args.dropout,
+        heads=args.heads,
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
     for epoch in range(1, args.n_epochs + 1):
