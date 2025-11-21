@@ -36,7 +36,7 @@ def main():
     artifact = joblib.load(args.artifact)
     model_cfg = artifact.get(
         "model_config",
-        {"input_dim": 1, "hidden_dim": 128, "num_layers": 3, "projection_dim": 64, "dropout": 0.1},
+        {"input_dim": 2, "hidden_dim": 128, "num_layers": 3, "projection_dim": 64, "dropout": 0.1},
     )
     lattice_shape = tuple(artifact.get("lattice_shape", infer_lattice_shape(features.shape[1], metadata)))
     periodic = bool(artifact.get("periodic", True))
@@ -50,7 +50,7 @@ def main():
     loader = DataLoader(graphs, batch_size=args.batch_size, shuffle=False)
 
     model = build_contrastive_lattice_model(
-        input_dim=model_cfg.get("input_dim", 1),
+        input_dim=model_cfg.get("input_dim", 2),
         hidden_dim=model_cfg.get("hidden_dim", 128),
         num_layers=model_cfg.get("num_layers", 3),
         projection_dim=model_cfg.get("projection_dim", 64),

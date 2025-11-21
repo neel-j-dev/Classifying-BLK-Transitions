@@ -112,17 +112,17 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train and evaluate a PyTorch Geometric model on lattice graphs (one graph per sample)."
     )
-    parser.add_argument("--dataset-dir", type=Path, default=Path("../XYModel/blt_dataset"))
+    parser.add_argument("--dataset-dir", type=Path, default=Path("XYModel/blt_dataset"))
     parser.add_argument("--model-type", choices=["gcn", "attn_temp"], default="attn_temp",
                         help="gcn=phase classifier, attn_temp=attention regressor for temperature.")
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-layers", type=int, default=3)
-    parser.add_argument("--n-epochs", type=int, default=400)
+    parser.add_argument("--n-epochs", type=int, default=150)
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--random-state", type=int, default=0)
-    parser.add_argument("--artifact", type=Path, default=Path("artifacts/pyg_lattice_model.joblib"))
+    parser.add_argument("--artifact", type=Path, default=Path("GNN/artifacts/pyg_lattice_model.joblib"))
     parser.add_argument("--no-periodic", action="store_true", help="Disable periodic boundary edges.", default=True)
     parser.add_argument("--heads", type=int, default=2, help="Number of attention heads (attn model).")
     add_split_arg(parser, "val", "val.npz")
@@ -167,7 +167,7 @@ def main():
 
     model = build_pyg_lattice_model(
         model_type=args.model_type,
-        input_dim=1,
+        input_dim=2,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         dropout=args.dropout,
@@ -210,7 +210,7 @@ def main():
     artifact = {
         "model_state_dict": model.state_dict(),
         "model_config": {
-            "input_dim": 1,
+            "input_dim": 2,
             "hidden_dim": args.hidden_dim,
             "num_layers": args.num_layers,
             "dropout": args.dropout,

@@ -63,6 +63,10 @@ def plot_pca(embeddings: np.ndarray, color_values: np.ndarray, color_label: str,
     cb.set_label(color_label)
     ax.set_xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}% var)")
     ax.set_ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}% var)")
+    
+    for i in range(len(pca.explained_variance_ratio_)):
+        print(f"PC{i} ({pca.explained_variance_ratio_[i]*100:.1f}% var)")
+
     ax.set_title(title)
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -73,19 +77,19 @@ def plot_pca(embeddings: np.ndarray, color_values: np.ndarray, color_label: str,
 
 def main():
     parser = argparse.ArgumentParser(description="PCA visualization of PyG lattice graph embeddings.")
-    parser.add_argument("--artifact", type=Path, default=Path("artifacts/pyg_lattice_model.joblib"))
-    parser.add_argument("--dataset", type=Path, default=Path("../XYModel/blt_dataset/train.npz"))
+    parser.add_argument("--artifact", type=Path, default=Path("GNN/artifacts/pyg_lattice_model.joblib"))
+    parser.add_argument("--dataset", type=Path, default=Path("XYModel/blt_dataset/train.npz"))
     parser.add_argument("--output", type=Path, default=Path("artifacts/pca_embeddings.png"))
     parser.add_argument("--batch-size", type=int, default=128)
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     artifact = joblib.load(args.artifact)
-    model_cfg = artifact.get("model_config", {"input_dim": 1, "hidden_dim": 64, "num_layers": 2, "dropout": 0.1, "heads": 2})
+    model_cfg = artifact.get("model_config", {"input_dim": 2, "hidden_dim": 64, "num_layers": 2, "dropout": 0.1, "heads": 2})
     model_type = artifact.get("model_type", "gcn")
 
     features, temps, labels = load_split(args.dataset)
-    metadata = load_metadata(args.dataset)
+    metadata = load_metadata(args.dataset.parent)
     lattice_shape = tuple(artifact.get("lattice_shape", infer_lattice_shape(features.shape[1], metadata)))
     periodic = bool(artifact.get("periodic", False))
     edge_index = artifact.get("edge_index")

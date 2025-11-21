@@ -317,7 +317,7 @@ def build_pyg_lattice_model(
 # Contrastive Lattice Encoder
 # -------------------------------
 class ContrastiveLatticeEncoder(nn.Module):
-    """GCN-based encoder with projection head for contrastive learning on lattice graphs."""
+    """Transformer-based encoder with projection head for contrastive learning on lattice graphs."""
 
     def __init__(
         self,

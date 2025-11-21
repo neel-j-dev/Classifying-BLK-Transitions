@@ -90,7 +90,7 @@ def main():
     loader = DataLoader(graphs, batch_size=args.batch_size, shuffle=True)
 
     model = build_contrastive_lattice_model(
-        input_dim=1,
+        input_dim=2,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         projection_dim=args.projection_dim,
@@ -106,7 +106,7 @@ def main():
     artifact = {
         "model_state_dict": model.state_dict(),
         "model_config": {
-            "input_dim": 1,
+            "input_dim": 2,
             "hidden_dim": args.hidden_dim,
             "num_layers": args.num_layers,
             "projection_dim": args.projection_dim,

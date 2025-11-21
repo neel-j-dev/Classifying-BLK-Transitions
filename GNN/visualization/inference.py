@@ -16,8 +16,6 @@ from GNN.utils.data_utils import load_split
 from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
 from GNN.utils.metrics import estimate_critical_temperature, phase_metrics
 from GNN.models.models import build_pyg_lattice_model
-import json
-
 def evaluate(model, loader, device):
     model.eval()
     all_probs = []
@@ -197,9 +195,9 @@ def load_true_tc(dataset_path: Path, cli_tc: float | None) -> float | None:
 
 def main():
     parser = argparse.ArgumentParser(description="Visualize PyG lattice graph predictions.")
-    parser.add_argument("--artifact", type=Path, default=Path("artifacts/pyg_lattice_model.joblib"))
-    parser.add_argument("--dataset", type=Path, default=Path("../XYModel/blt_dataset/train.npz"))
-    parser.add_argument("--output", type=Path, default=Path("artifacts/inference_plot.png"))
+    parser.add_argument("--artifact", type=Path, default=Path("GNN/artifacts/pyg_lattice_model.joblib"))
+    parser.add_argument("--dataset", type=Path, default=Path("XYModel/blt_dataset/train.npz"))
+    parser.add_argument("--output", type=Path, default=Path("GNN/artifacts/inference_plot.png"))
     parser.add_argument("--true-tc", type=float, default=None, help="Optional reference critical temperature.")
     parser.add_argument("--batch-size", type=int, default=64)
     args = parser.parse_args()
@@ -208,12 +206,12 @@ def main():
     artifact = joblib.load(args.artifact)
     model_cfg = artifact.get(
         "model_config",
-        {"input_dim": 1, "hidden_dim": 64, "num_layers": 2, "dropout": 0.1, "heads": 2},
+        {"input_dim": 2, "hidden_dim": 64, "num_layers": 2, "dropout": 0.1, "heads": 2},
     )
     model_type = artifact.get("model_type", "gcn")
 
     features, temps, labels = load_split(args.dataset)
-    metadata = load_metadata(args.dataset)
+    metadata = load_metadata(args.dataset.parent)
 
     lattice_shape = tuple(artifact.get("lattice_shape", infer_lattice_shape(features.shape[1], metadata)))
     periodic = bool(artifact.get("periodic", False))

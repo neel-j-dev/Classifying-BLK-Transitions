@@ -19,11 +19,14 @@ import numpy as np
 from xy import XYModelMetropolisSimulation
 
 
-def extract_lattice_angles(sim: XYModelMetropolisSimulation) -> np.ndarray:
-    """Flatten the latest lattice snapshot into per-node angular features."""
+def extract_lattice_vectors(sim: XYModelMetropolisSimulation) -> np.ndarray:
+    """Flatten the latest lattice snapshot into per-node 2D vectors (cos, sin)."""
 
-    angles = (2 * np.pi * sim.L).astype(np.float64)
-    return angles.reshape(-1)
+    angles = 2 * np.pi * sim.L.astype(np.float64)
+    cos_vals = np.cos(angles)
+    sin_vals = np.sin(angles)
+    stacked = np.stack([cos_vals, sin_vals], axis=-1)  # shape (H, W, 2)
+    return stacked.reshape(-1, 2)
 
 
 def generate_samples(
@@ -55,7 +58,7 @@ def generate_samples(
                 random_state=rng.integers(0, 1_000_000_000),
             )
             sim.simulate(steps=steps, iters_per_step=iters_per_step)
-            records.append(extract_lattice_angles(sim))
+            records.append(extract_lattice_vectors(sim).reshape(-1))
             temp_targets.append(temp)
 
     return np.vstack(records), np.array(temp_targets)
@@ -82,11 +85,11 @@ def save_split(path: Path, features: np.ndarray, temps: np.ndarray, labels: np.n
 
 def main():
     parser = argparse.ArgumentParser(description="Generate BLT dataset splits.")
-    parser.add_argument("--output-dir", type=Path, default=Path("blt_dataset"))
+    parser.add_argument("--output-dir", type=Path, default=Path("XYModel/blt_dataset"))
     parser.add_argument("--min-temp", type=float, default=0.3)
     parser.add_argument("--max-temp", type=float, default=1.5)
     parser.add_argument("--num-temps", type=int, default=200)
-    parser.add_argument("--samples-per-temp", type=int, default=6)
+    parser.add_argument("--samples-per-temp", type=int, default=3)
     parser.add_argument("--lattice-size", type=int, default=20)
     parser.add_argument("--steps", type=int, default=1)
     parser.add_argument("--iters-per-step", type=int, default=40000)
@@ -136,9 +139,10 @@ def main():
         "train_ratio": args.train_ratio,
         "val_ratio": args.val_ratio,
         "seed": args.seed,
-        "feature_type": "lattice_angles",
+        "feature_type": "lattice_vectors",
         "feature_shape": lattice_shape,
         "feature_length": int(features.shape[1]),
+        "features_per_node": 2,
     }
 
     metadata_path = output_dir / "metadata.json"

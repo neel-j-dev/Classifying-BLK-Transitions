@@ -80,16 +80,17 @@ def make_lattice_graphs(
     edge_index: torch.Tensor,
     labels: Optional[np.ndarray] = None,
 ) -> List[Data]:
-    """Convert lattice samples into PyG graphs with node angles + optional labels."""
+    """Convert lattice samples into PyG graphs with per-node features + optional labels."""
 
     num_nodes = lattice_shape[0] * lattice_shape[1]
-    if features.shape[1] != num_nodes:
-        raise ValueError(f"Feature length {features.shape[1]} does not match lattice nodes {num_nodes}.")
+    if features.shape[1] % num_nodes != 0:
+        raise ValueError(f"Feature length {features.shape[1]} is not divisible by lattice nodes {num_nodes}.")
+    per_node_dim = features.shape[1] // num_nodes
 
     edge_attr = build_edge_attr(edge_index)
     graphs: List[Data] = []
     for idx, (x_arr, temp) in enumerate(zip(features, temps)):
-        x = torch.from_numpy(x_arr.reshape(-1, 1)).float()
+        x = torch.from_numpy(x_arr.reshape(num_nodes, per_node_dim)).float()
         data = Data(
             x=x,
             edge_index=edge_index,
