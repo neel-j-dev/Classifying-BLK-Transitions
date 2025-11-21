@@ -1,1 +1,1 @@
-python -m GNN.train.train_contrastive
+python -m GNN.visualization.inference_contrastive --dataset XYModel/blt_dataset/test.npz  --output GNN/artifacts/contrastive_inference.json --pca-plot GNN/artifacts/contrastive_pca.png

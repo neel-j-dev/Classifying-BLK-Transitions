@@ -20,10 +20,10 @@ from GNN.models.models import build_contrastive_lattice_model
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run inference with a trained contrastive lattice encoder.")
-    parser.add_argument("--artifact", type=Path, default=Path("artifacts/contrastive_model.joblib"))
-    parser.add_argument("--dataset", type=Path, default=Path("../XYModel/blt_dataset/test.npz"))
-    parser.add_argument("--output", type=Path, default=Path("artifacts/contrastive_embeddings.npz"))
+    parser = argparse.ArgumentParser(description="Run inference with a trained contra   stive lattice encoder.")
+    parser.add_argument("--artifact", type=Path, default=Path("GNN/artifacts/contrastive_model.joblib"))
+    parser.add_argument("--dataset", type=Path, default=Path("XYModel/blt_dataset/test.npz"))
+    parser.add_argument("--output", type=Path, default=Path("GNN/artifacts/contrastive_embeddings.npz"))
     parser.add_argument("--pca-plot", type=Path, default=None, help="Optional path to save PCA scatter of embeddings colored by temperature.")
     parser.add_argument("--batch-size", type=int, default=256)
     args = parser.parse_args()
