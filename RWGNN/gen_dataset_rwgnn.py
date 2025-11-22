@@ -10,8 +10,8 @@ from typing import Dict
 import torch
 from torch_geometric.transforms import AddRandomWalkPE
 
-from GNN.utils.data_utils import load_split
-from GNN.utils.lattice_utils import (
+from utils.data_utils import load_split
+from utils.lattice_utils import (
     build_lattice_edge_index,
     infer_lattice_shape,
     load_metadata,
@@ -32,7 +32,7 @@ def convert_split(
 
     features, temps, labels = load_split(split_path)
     graphs = make_lattice_graphs(features, temps, lattice_shape, edge_index, labels=labels)
-    rw_transform = AddRandomWalkPE(walk_length=walk_length, attr_name="rw_pe", is_undirected=True)
+    rw_transform = AddRandomWalkPE(walk_length=walk_length, attr_name="rw_pe")
     graphs = [rw_transform(g) for g in graphs]
 
     target_path = output_dir / f"{split_name}.pt"
@@ -42,7 +42,7 @@ def convert_split(
 
 def main():
     parser = argparse.ArgumentParser(description="Build RWPE-enhanced PyG graphs for BLT detection.")
-    parser.add_argument("--source-dir", type=Path, default=Path("XYModel/blt_dataset"), help="Directory with *.npz splits.")
+    parser.add_argument("--source-dir", type=Path, default=Path("../XYModel/blt_dataset"), help="Directory with *.npz splits.")
     parser.add_argument("--output-dir", type=Path, default=Path("RWGNN/blt_rwgnn_dataset"), help="Where to write *.pt splits.")
     parser.add_argument("--walk-length", type=int, default=16, help="Random walk length for positional encodings.")
     parser.add_argument("--no-periodic", action="store_true", help="Disable periodic boundary conditions.")

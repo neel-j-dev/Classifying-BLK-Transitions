@@ -1,0 +1,14 @@
+{
+  "source_dataset": "../XYModel/blt_dataset",
+  "output_dir": "RWGNN/blt_rwgnn_dataset",
+  "lattice_shape": [
+    20,
+    20
+  ],
+  "periodic_edges": true,
+  "walk_length": 16,
+  "features_per_node": 2,
+  "critical_temp": 0.89,
+  "min_temp": 0.3,
+  "max_temp": 1.5
+}
