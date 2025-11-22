@@ -51,7 +51,7 @@ class RandomWalkGNN(nn.Module):
 
 
 def load_graph_split(path: Path) -> List:
-    graphs = torch.load(path)
+    graphs = torch.load(path, weights_only=False)
     if not isinstance(graphs, list):
         raise ValueError(f"Expected a list of Data objects in {path}")
     return graphs
@@ -75,7 +75,7 @@ def step_epoch(model, loader, optimizer, device, temp_weight: float) -> float:
     return total_loss / max(total_graphs, 1)
 
 
-def evaluate(model, loader, device) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
+def evaluate(model, loader, device) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
     model.eval()
     all_logits: List[torch.Tensor] = []
     all_temps: List[torch.Tensor] = []
@@ -104,7 +104,7 @@ def evaluate(model, loader, device) -> Tuple[np.ndarray, np.ndarray, np.ndarray,
     rmse = float(np.sqrt(mean_squared_error(temps, temp_preds)))
     metrics = {"accuracy": acc, "f1": f1, "mae": mae, "rmse": rmse}
 
-    return preds.numpy(), temps.numpy(), temp_preds.numpy(), metrics
+    return preds.numpy(), temps.numpy(), temp_preds.numpy(), probs.numpy(), metrics
 
 
 def plot_confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, out_path: Path):
@@ -132,19 +132,48 @@ def plot_temperature_regression(true_t: np.ndarray, pred_t: np.ndarray, out_path
     plt.close()
 
 
+def estimate_critical_temperature(temps: np.ndarray, phase_probs: np.ndarray) -> float:
+    """
+    Estimate the critical temperature as the point where the predicted phase
+    probability crosses 0.5. If no crossing exists, return the mean
+    temperature as a fallback.
+    """
+
+    if phase_probs.ndim != 2 or phase_probs.shape[1] < 2:
+        raise ValueError("phase_probs must be shape (N, 2) with class probabilities")
+
+    order = np.argsort(temps)
+    t_sorted = temps[order]
+    p_sorted = phase_probs[order, 1]
+
+    mask = (p_sorted >= 0.5).astype(int)
+    crossing_idx = np.where(np.diff(mask) != 0)[0]
+    if len(crossing_idx) == 0:
+        return float(t_sorted.mean())
+
+    idx = crossing_idx[0]
+    t0, t1 = t_sorted[idx], t_sorted[idx + 1]
+    p0, p1 = p_sorted[idx], p_sorted[idx + 1]
+    if p1 == p0:
+        return float((t0 + t1) / 2.0)
+
+    alpha = (0.5 - p0) / (p1 - p0)
+    return float(t0 + alpha * (t1 - t0))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Train and test RWPE GNN for BLT transitions.")
-    parser.add_argument("--dataset-dir", type=Path, default=Path("RWGNN/blt_rwgnn_dataset"))
+    parser.add_argument("--dataset-dir", type=Path, default=Path("blt_rwgnn_dataset"))
     parser.add_argument("--hidden-dim", type=int, default=64)
     parser.add_argument("--num-layers", type=int, default=3)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=200)
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--temp-weight", type=float, default=1.0, help="Weight for temperature MSE in loss.")
-    parser.add_argument("--artifact", type=Path, default=Path("RWGNN/artifacts/rwgnn_model.joblib"))
-    parser.add_argument("--confusion-path", type=Path, default=Path("RWGNN/artifacts/confusion_matrix.png"))
-    parser.add_argument("--regression-path", type=Path, default=Path("RWGNN/artifacts/temperature_regression.png"))
+    parser.add_argument("--artifact", type=Path, default=Path("artifacts/rwgnn_model.joblib"))
+    parser.add_argument("--confusion-path", type=Path, default=Path("artifacts/confusion_matrix.png"))
+    parser.add_argument("--regression-path", type=Path, default=Path("artifacts/temperature_regression.png"))
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -179,7 +208,7 @@ def main():
         if epoch % max(1, args.epochs // 10) == 0 or epoch == 1:
             model.eval()
             with torch.no_grad():
-                _, _, _, val_metrics = evaluate(model, val_loader, device)
+                _, _, _, _, val_metrics = evaluate(model, val_loader, device)
             print(
                 f"Epoch {epoch}/{args.epochs} - loss={loss:.4f} "
                 f"val_acc={val_metrics['accuracy']:.3f} val_f1={val_metrics['f1']:.3f} "
@@ -188,13 +217,13 @@ def main():
 
     # Final evaluations
     def collect_metrics(split: str, loader):
-        preds, true_t, pred_t, metrics = evaluate(model, loader, device)
+        preds, true_t, pred_t, probs, metrics = evaluate(model, loader, device)
         metrics["split"] = split
-        return preds, true_t, pred_t, metrics
+        return preds, true_t, pred_t, probs, metrics
 
-    train_preds, train_t, train_pred_t, train_metrics = collect_metrics("train", train_loader)
-    val_preds, val_t, val_pred_t, val_metrics = collect_metrics("val", val_loader)
-    test_preds, test_t, test_pred_t, test_metrics = collect_metrics("test", test_loader)
+    train_preds, train_t, train_pred_t, train_probs, train_metrics = collect_metrics("train", train_loader)
+    val_preds, val_t, val_pred_t, val_probs, val_metrics = collect_metrics("val", val_loader)
+    test_preds, test_t, test_pred_t, test_probs, test_metrics = collect_metrics("test", test_loader)
 
     for metrics in [train_metrics, val_metrics, test_metrics]:
         print(
@@ -203,9 +232,12 @@ def main():
         )
 
     # Confusion matrix and regression plot for test split
-    y_true_test = np.concatenate([batch.y.cpu().numpy() for batch in test_graphs])
+    # Ensure labels are 1D before plotting; individual graphs may store a scalar label.
+    y_true_test = np.array([int(batch.y.view(-1)[0].cpu()) for batch in test_graphs])
     plot_confusion_matrix(y_true_test, test_preds, args.confusion_path)
     plot_temperature_regression(test_t, test_pred_t, args.regression_path)
+    critical_temp = estimate_critical_temperature(test_t, test_probs)
+    print(f"Estimated critical temperature (predicted) ≈ {critical_temp:.4f}")
     print(f"Saved confusion matrix to {args.confusion_path}")
     print(f"Saved temperature regression plot to {args.regression_path}")
 
@@ -221,6 +253,7 @@ def main():
         "optimizer_state_dict": optimizer.state_dict(),
         "metrics": [train_metrics, val_metrics, test_metrics],
         "metadata": metadata,
+        "predicted_critical_temp": critical_temp,
     }
     args.artifact.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(artifact, args.artifact)
