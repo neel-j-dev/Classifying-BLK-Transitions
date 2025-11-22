@@ -18,7 +18,6 @@ import numpy as np
 import torch
 from torch import Tensor
 from torch_geometric.data import Data
-from torch_geometric.utils import random_walk
 
 
 @dataclass
@@ -53,16 +52,32 @@ def _build_periodic_grid_edges(lattice_shape: Tuple[int, int]) -> Tensor:
 
 
 def _random_walk_pe(edge_index: Tensor, num_nodes: int, *, walk_length: int, num_walks: int) -> Tensor:
-    """Compute simple random-walk positional encodings.
+    """Compute simple random-walk positional encodings without extra dependencies.
 
-    For each node, we estimate the probability of returning to the start node
-    after 1..``walk_length`` steps by launching ``num_walks`` walks. The result
-    is a ``[num_nodes, walk_length]`` matrix that can be concatenated to other
-    features.
+    PyG exposes ``torch_geometric.utils.random_walk`` only when optional
+    extensions are compiled. To avoid that requirement, we implement a small
+    pure-PyTorch sampler that steps uniformly over the outgoing neighbors of
+    each node. For every node, ``num_walks`` walks of length ``walk_length``
+    are launched and we record the return probability after each step.
     """
 
+    # Build adjacency lists once for cheap neighbor sampling.
+    neighbors = [[] for _ in range(num_nodes)]
+    for src, dst in edge_index.t().tolist():
+        neighbors[src].append(dst)
+
     start_nodes = torch.arange(num_nodes).repeat_interleave(num_walks)
-    walks = random_walk(edge_index[0], edge_index[1], start_nodes, walk_length)
+    walks = torch.zeros((start_nodes.numel(), walk_length + 1), dtype=torch.long)
+    walks[:, 0] = start_nodes
+
+    current = start_nodes.clone()
+    for step in range(1, walk_length + 1):
+        next_nodes = torch.empty_like(current)
+        for idx, node in enumerate(current.tolist()):
+            nbrs = neighbors[node] or [node]
+            next_nodes[idx] = nbrs[torch.randint(len(nbrs), ())]
+        walks[:, step] = next_nodes
+        current = next_nodes
 
     rwpe = torch.zeros((num_nodes, walk_length), dtype=torch.float)
     for step in range(1, walk_length + 1):
@@ -120,7 +135,20 @@ def load_xy_splits(
         features, temps, _ = _load_npz_split(data_dir / f"{split_name}.npz")
         graphs: List[Data] = []
         for lattice, temp in zip(features, temps):
-            lattice_vectors = lattice.reshape(*lattice_shape, 2)
+            lattice = np.asarray(lattice)
+            expected_sites = lattice_shape[0] * lattice_shape[1]
+
+            if lattice.size not in {expected_sites, expected_sites * 2}:
+                raise ValueError(
+                    "Unexpected lattice feature shape: "
+                    f"got {lattice.shape} (size={lattice.size}), "
+                    f"expected {expected_sites} or {expected_sites * 2}."
+                )
+
+            # Preserve the provided feature representation (angles or already
+            # vectorised) without forcing a cosine/sine expansion.
+            lattice_vectors = lattice.reshape(*lattice_shape, -1)
+
             graphs.append(
                 lattice_vectors_to_data(
                     lattice_vectors,
@@ -167,7 +195,8 @@ def generate_from_simulator(
                 random_state=int(rng.integers(0, 1_000_000_000)),
             )
             sim.simulate(steps=steps, iters_per_step=iters_per_step)
-            lattice_vectors = np.stack([np.cos(2 * np.pi * sim.L), np.sin(2 * np.pi * sim.L)], axis=-1)
+            # Keep the raw lattice angles instead of expanding to cosine/sine vectors
+            lattice_vectors = np.asarray(sim.L, dtype=float)
             graphs.append(
                 lattice_vectors_to_data(
                     lattice_vectors,

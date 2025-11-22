@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Tuple
 
 import torch
@@ -9,10 +10,21 @@ from torch import nn, Tensor
 from torch_geometric.nn import GCNConv, global_mean_pool
 
 
-def _gaussian_nll(pred_mean: Tensor, pred_log_var: Tensor, target: Tensor) -> Tensor:
-    """Gaussian negative log-likelihood for 1D targets."""
+LOG_2PI = math.log(2 * math.pi)
 
-    return 0.5 * (torch.exp(-pred_log_var) * (pred_mean - target) ** 2 + pred_log_var)
+
+def _clamp_log_var(log_var: Tensor, *, min_val: float = -4.0, max_val: float = 4.0) -> Tensor:
+    """Bound log-variance predictions to avoid degenerate negative losses."""
+
+    return torch.clamp(log_var, min=min_val, max=max_val)
+
+
+def _gaussian_nll(pred_mean: Tensor, pred_log_var: Tensor, target: Tensor) -> Tensor:
+    """Stable Gaussian negative log-likelihood for 1D targets."""
+
+    log_var = _clamp_log_var(pred_log_var)
+    var = torch.exp(log_var)
+    return 0.5 * (((pred_mean - target) ** 2) / var + log_var + LOG_2PI)
 
 
 class RandomWalkGNN(torch.nn.Module):
@@ -83,7 +95,8 @@ class RandomWalkGNN(torch.nn.Module):
         phase_probs = outputs["phase_logits"].softmax(dim=-1)
 
         tc_mean = outputs["tc_mean"].squeeze(-1)
-        tc_std = torch.exp(0.5 * outputs["tc_log_var"].squeeze(-1))
+        tc_log_var = _clamp_log_var(outputs["tc_log_var"].squeeze(-1))
+        tc_std = torch.exp(0.5 * tc_log_var)
         lower = tc_mean - 1.96 * tc_std
         upper = tc_mean + 1.96 * tc_std
         return phase_probs, lower, upper, tc_mean

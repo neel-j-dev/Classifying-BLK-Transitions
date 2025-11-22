@@ -1,6 +1,20 @@
-blt_dataset
-GNN/__pycache__
-GNN/artifacts
-blt_sdataset_large
-XYModel/__pycache__
-__pycache__
+# Generated datasets and model artifacts
+blt_dataset/
+blt_sdataset_large/
+XYModel/blt_dataset/
+RWGNN/blt_dataset/
+GNN/artifacts/
+artifacts/
+RWGNN/artifacts/
+*.pt
+*.pth
+
+# Bytecode and caches
+__pycache__/
+*/__pycache__/
+*.pyc
+GNN/__pycache__/
+XYModel/__pycache__/
+
+# Notebook checkpoints
+.ipynb_checkpoints/

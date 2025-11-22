@@ -11,11 +11,14 @@ temperature.
 - `data.py`: utilities to translate XY lattice snapshots into `torch_geometric`
   `Data` objects, including random-walk positional encodings and helpers for
   loading the NPZ splits produced by `XYModel/generate_blt_dataset.py`.
-- `model.py`: the `RandomWalkGNN` architecture with heads for phase
+ - `model.py`: the `RandomWalkGNN` architecture with heads for phase
   classification, temperature regression, and uncertainty-aware critical
   temperature estimation.
 - `train.py`: end-to-end training script that can either reuse NPZ splits or
   generate fresh simulation data on the fly.
+- `../inference.py`: lightweight helper to evaluate a trained checkpoint on the
+  saved `train.npz`/`val.npz`/`test.npz` splits and optionally run a few
+  fine-tuning epochs on the training data before reporting metrics.
 
 ## Quickstart
 1. Generate BLT splits if you do not already have them:
@@ -28,6 +31,15 @@ temperature.
    ```
    The script reports validation metrics each epoch, prints Tc intervals for a
    few samples, and saves `artifacts/rwg_nn.pt`.
+
+3. Evaluate or fine-tune an existing checkpoint on the saved splits:
+   ```bash
+   python inference.py --dataset-dir XYModel/blt_dataset --checkpoint artifacts/rwg_nn.pt
+   ```
+   The helper loads `train.npz`, `val.npz`, and `test.npz` (plus
+   `metadata.json`) and prints validation/test metrics along with a few sample
+   predictions and Tc intervals. Pass `--finetune-epochs 3` (for example) to run
+   brief extra training before evaluation.
 
 ## Estimating the critical interval
 The model exposes `predict_with_interval`, which returns phase probabilities
