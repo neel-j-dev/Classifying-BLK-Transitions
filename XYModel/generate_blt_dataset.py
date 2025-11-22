@@ -92,7 +92,7 @@ def main():
     parser.add_argument("--samples-per-temp", type=int, default=10)
     parser.add_argument("--lattice-size", type=int, default=50)
     parser.add_argument("--steps", type=int, default=1)
-    parser.add_argument("--iters-per-step", type=int, default=40000)
+    parser.add_argument("--iters-per-step", type=int, default=20000)
     parser.add_argument("--critical-temp", type=float, default=0.89)
     parser.add_argument("--coupling", type=float, default=1.0)
     parser.add_argument("--train-ratio", type=float, default=0.7)

@@ -24,12 +24,12 @@ from sklearn.svm import SVC
 
 def main():
     parser = argparse.ArgumentParser(description="UMAP visualization of PyG lattice graph embeddings.")
-    parser.add_argument("--artifact", type=Path, default=Path("artifacts/pyg_lattice_model.joblib"))
+    parser.add_argument("--artifact", type=Path, default=Path("GNN/artifacts/pyg_lattice_model.joblib"))
     parser.add_argument("--dataset", type=Path, default=Path("XYModel/blt_dataset/train.npz"))
-    parser.add_argument("--output", type=Path, default=Path("artifacts/umap_embeddings.png"))
-    parser.add_argument("--batch-size", type=int, default=128)
-    parser.add_argument("--n-neighbors", type=int, default=15)
-    parser.add_argument("--min-dist", type=float, default=0.0)
+    parser.add_argument("--output", type=Path, default=Path("GNN/artifacts/umap_embeddings.png"))
+    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--n-neighbors", type=int, default=50)
+    parser.add_argument("--min-dist", type=float, default=0.1)
     parser.add_argument("--metric", type=str, default="euclidean")
     args = parser.parse_args()
 
