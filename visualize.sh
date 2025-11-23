@@ -5,4 +5,4 @@
 
 # Inference and PCA visualization for supervised model on BLT dataset
 # python -m GNN.visualization.inference
-python -m GNN.visualization.plot_pca
+python -m GNN.visualization.plot_umap --artifact GNN/artifacts/pyg_lattice_model.joblib

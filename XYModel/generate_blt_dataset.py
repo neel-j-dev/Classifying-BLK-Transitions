@@ -42,7 +42,7 @@ def generate_samples(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Run the XY simulation at many temperatures and collect observables."""
 
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(0)
     temps = np.linspace(min_temp, max_temp, num_temps)
     records: List[np.ndarray] = []
     temp_targets: List[float] = []
@@ -55,7 +55,7 @@ def generate_samples(
                 lattice_shape=lattice_shape,
                 beta=beta,
                 J=coupling,
-                random_state=rng.integers(0, 1_000_000_000),
+                random_state=0,
             )
             sim.simulate(steps=steps, iters_per_step=iters_per_step)
             records.append(extract_lattice_vectors(sim).reshape(-1))
@@ -65,7 +65,7 @@ def generate_samples(
 
 
 def split_indices(num_samples: int, train_ratio: float, val_ratio: float, seed: int):
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(0)
     indices = np.arange(num_samples)
     rng.shuffle(indices)
 
@@ -89,8 +89,8 @@ def main():
     parser.add_argument("--min-temp", type=float, default=0.3)
     parser.add_argument("--max-temp", type=float, default=1.5)
     parser.add_argument("--num-temps", type=int, default=200)
-    parser.add_argument("--samples-per-temp", type=int, default=3)
-    parser.add_argument("--lattice-size", type=int, default=20)
+    parser.add_argument("--samples-per-temp", type=int, default=20)
+    parser.add_argument("--lattice-size", type=int, default=50)
     parser.add_argument("--steps", type=int, default=1)
     parser.add_argument("--iters-per-step", type=int, default=40000)
     parser.add_argument("--critical-temp", type=float, default=0.89)

@@ -17,16 +17,19 @@ import umap
 from GNN.utils.data_utils import load_split
 from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
 from GNN.models.models import build_pyg_lattice_model
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.svm import SVC
 
 
 def main():
     parser = argparse.ArgumentParser(description="UMAP visualization of PyG lattice graph embeddings.")
     parser.add_argument("--artifact", type=Path, default=Path("artifacts/pyg_lattice_model.joblib"))
-    parser.add_argument("--dataset", type=Path, default=Path("../XYModel/blt_dataset/train.npz"))
+    parser.add_argument("--dataset", type=Path, default=Path("XYModel/blt_dataset/train.npz"))
     parser.add_argument("--output", type=Path, default=Path("artifacts/umap_embeddings.png"))
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--n-neighbors", type=int, default=15)
-    parser.add_argument("--min-dist", type=float, default=0.1)
+    parser.add_argument("--min-dist", type=float, default=0.0)
     parser.add_argument("--metric", type=str, default="euclidean")
     args = parser.parse_args()
 
@@ -116,6 +119,129 @@ def main():
     plt.close(fig)
     print(f"Saved UMAP plot to {args.output}")
 
+    # --- Silhouette Analysis for Clustering ---
+
+    print("Running silhouette analysis to determine optimal clusters...")
+    range_n_clusters = list(range(2, 11))
+    best_n_clusters = 2
+    best_score = -1
+    best_labels = None
+
+    for n_clusters in range_n_clusters:
+        clusterer = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        cluster_labels = clusterer.fit_transform(proj)
+        # We use fit_predict or labels_ from fit. Using fit_predict here.
+        cluster_labels = clusterer.fit_predict(proj)
+        
+        silhouette_avg = silhouette_score(proj, cluster_labels)
+        print(f"For n_clusters = {n_clusters}, the average silhouette_score is : {silhouette_avg:.4f}")
+        
+        if silhouette_avg > best_score:
+            best_score = silhouette_avg
+            best_n_clusters = n_clusters
+            best_labels = cluster_labels
+
+    print(f"Best number of clusters: {best_n_clusters} with score {best_score:.4f}")
+
+    # Plot clusters
+    fig_clust, ax_clust = plt.subplots(figsize=(8, 6))
+    scatter_clust = ax_clust.scatter(
+        proj[:, 0],
+        proj[:, 1],
+        c=best_labels,
+        cmap="tab10",
+        s=30,
+        alpha=0.85,
+        edgecolor="black",
+        linewidth=0.2,
+    )
+    # Create a legend for clusters instead of a colorbar since they are categorical
+    handles, _ = scatter_clust.legend_elements()
+    legend_labels = [f"Cluster {i}" for i in range(best_n_clusters)]
+    ax_clust.legend(handles, legend_labels, title="Clusters")
+    
+    ax_clust.set_xlabel("UMAP-1")
+    ax_clust.set_ylabel("UMAP-2")
+    ax_clust.set_title(f"UMAP Clusters (k={best_n_clusters}, Silhouette={best_score:.2f})")
+    fig_clust.tight_layout()
+    
+    cluster_output = args.output.with_name(args.output.stem + "_clusters" + args.output.suffix)
+    fig_clust.savefig(cluster_output, dpi=200)
+    plt.close(fig_clust)
+    print(f"Saved clustered UMAP plot to {cluster_output}")
+
+
+    # --- Decision Boundary & Critical Point Estimation ---
+
+    if best_n_clusters == 2:
+
+        print("Fitting SVM to determine decision boundary...")
+        # Fit an SVM with RBF kernel to capture non-linear boundaries in UMAP space
+        clf = SVC(kernel="rbf", C=1.0)
+        clf.fit(proj, best_labels)
+
+        # Create a meshgrid to plot the decision boundary
+        x_min, x_max = proj[:, 0].min() - 1, proj[:, 0].max() + 1
+        y_min, y_max = proj[:, 1].min() - 1, proj[:, 1].max() + 1
+        # Dynamic step size for resolution
+        h = max(x_max - x_min, y_max - y_min) / 300
+        xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
+
+        # Predict on meshgrid
+        Z = clf.predict(np.c_[xx.ravel(), yy.ravel()])
+        Z = Z.reshape(xx.shape)
+
+        fig_bound, ax_bound = plt.subplots(figsize=(8, 6))
+        # Plot contour of decision boundary
+        ax_bound.contourf(xx, yy, Z, cmap="coolwarm", alpha=0.3)
+
+        # Scatter points colored by temperature
+        scatter_bound = ax_bound.scatter(
+            proj[:, 0],
+            proj[:, 1],
+            c=temps_np,
+            cmap="viridis",
+            s=30,
+            edgecolor="black",
+            linewidth=0.2,
+            alpha=0.8,
+        )
+
+        # Find the point closest to the decision boundary
+        # For binary classification, decision_function returns distance to hyperplane
+        dists = np.abs(clf.decision_function(proj))
+        closest_idx = np.argmin(dists)
+        closest_temp = temps_np[closest_idx]
+        closest_pt = proj[closest_idx]
+
+        print(f"Point closest to decision boundary has Temperature: {closest_temp:.5f}")
+
+        # Highlight the critical point
+        ax_bound.scatter(
+            [closest_pt[0]],
+            [closest_pt[1]],
+            s=200,
+            c="red",
+            marker="*",
+            edgecolor="black",
+            label=f"Tc ≈ {closest_temp:.4f}",
+            zorder=10
+        )
+        ax_bound.legend(loc="upper right")
+
+        cb_bound = plt.colorbar(scatter_bound, ax=ax_bound)
+        cb_bound.set_label("Temperature")
+        ax_bound.set_xlabel("UMAP-1")
+        ax_bound.set_ylabel("UMAP-2")
+        ax_bound.set_title("UMAP Decision Boundary & Critical Point")
+        
+        fig_bound.tight_layout()
+        bound_output = args.output.with_name(args.output.stem + "_boundary" + args.output.suffix)
+        fig_bound.savefig(bound_output, dpi=200)
+        plt.close(fig_bound)
+        print(f"Saved decision boundary plot to {bound_output}")
+    else:
+        print(f"Skipping decision boundary visualization: requires exactly 2 clusters, found {best_n_clusters}.")
 
 if __name__ == "__main__":
     main()
