@@ -1,6 +1,8 @@
 blt_dataset
 GNN/__pycache__
 GNN/artifacts
-blt_sdataset_large
-XYModel/__pycache__
+blt_dataset_large
+XYModel/__pycache__/*
 __pycache__
+artifacts/
+out.log
