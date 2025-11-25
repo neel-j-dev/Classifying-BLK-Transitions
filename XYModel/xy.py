@@ -130,7 +130,7 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
         for j in range(xy.L.shape[1]):
             rect = patches.Rectangle(xy=(i - 0.5, j - 0.5), height=1, width=1, facecolor="red")
             rects.append(rect)
-            colors.append(np.abs(xy.H_matrix[i, j]))
+            colors.append(0.1)
 
     rects = PatchCollection(rects)
     rects.set_clim([0, 4])
@@ -147,7 +147,6 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
         for _ in range(steps):
             xy.make_step()
 
-        colors = np.abs(xy.H_matrix.flatten('F'))
         rects.set_array(np.array(colors))
 
         U = np.cos(2 * np.pi * xy.L)
@@ -160,5 +159,10 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
     ani = animation.FuncAnimation(fig, update_quiver, frames=steps, fargs=(rects, Q, iters_per_step, xy),
                                    interval=25, blit=False)
 
-    ani.save(filename)
+    print("Saving animation...")
+    plt.show()
+
+print("Generating XY model animation...")
+temp = 0.3
+GetXYAnimation((20, 20), 1/temp, 100, 1000, "xy_animation.mp4", J=1, random_state=None)
 
