@@ -15,6 +15,7 @@ from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shap
 from GNN.utils.metrics import estimate_critical_temperature, phase_metrics
 from GNN.models.models import build_pyg_lattice_model
 
+from tqdm.auto import tqdm
 
 # -------------------------------
 # Training loop for Prediction Lattice Graphs
@@ -175,7 +176,7 @@ def main():
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    for epoch in range(1, args.n_epochs + 1):
+    for epoch in tqdm(range(1, args.n_epochs + 1), desc="Training epochs", leave=False):
         loss = train_one_epoch(model, train_loader, optimizer, device)
         if epoch % max(1, args.n_epochs // 40) == 0 or epoch == args.n_epochs:
             msg = f"Epoch {epoch}/{args.n_epochs} - train_loss={loss:.4f}"

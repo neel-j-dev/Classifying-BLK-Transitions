@@ -13,6 +13,7 @@ from torch_geometric.loader import DataLoader
 
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
+from tqdm.auto import tqdm
 
 from GNN.utils.data_utils import load_split
 from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
@@ -66,7 +67,7 @@ def main():
     temps_out = []
     labels_out = []
     with torch.no_grad():
-        for data in loader:
+        for data in tqdm(loader, desc="Embedding", leave=False):
             data = data.to(device)
             z = model.embed(data)
             embeddings.append(z.cpu())

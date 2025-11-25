@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
+from tqdm.auto import tqdm
 
 from GNN.utils.data_utils import load_split
 from GNN.utils.lattice_utils import (
@@ -98,7 +99,7 @@ def main():
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in tqdm(range(1, args.epochs + 1), desc="Contrastive epochs", leave=False):
         loss = train_epoch(model, loader, optimizer, device, noise_std=args.noise_std)
         if epoch % max(1, args.epochs // 20) == 0 or epoch == args.epochs:
             print(f"Epoch {epoch}/{args.epochs} - contrastive_loss={loss:.4f}")

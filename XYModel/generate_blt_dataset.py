@@ -17,6 +17,7 @@ from typing import List, Tuple
 import numpy as np
 
 from xy import XYModelMetropolisSimulation
+from tqdm.auto import tqdm
 
 
 def extract_lattice_vectors(sim: XYModelMetropolisSimulation) -> np.ndarray:
@@ -47,8 +48,7 @@ def generate_samples(
     records: List[np.ndarray] = []
     temp_targets: List[float] = []
 
-    for temp in temps:
-        print(f"Generating samples at T={temp:.3f}...")
+    for temp in tqdm(temps, desc="Generating samples"):
         beta = 1.0 / temp
         for _ in range(samples_per_temp):
             sim = XYModelMetropolisSimulation(

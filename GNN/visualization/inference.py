@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch_geometric.loader import DataLoader
+from tqdm.auto import tqdm
 
 from GNN.utils.data_utils import load_split
 from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
@@ -23,7 +24,7 @@ def evaluate(model, loader, device):
     all_temps = []
     all_pred_temps = []
     with torch.no_grad():
-        for data in loader:
+        for data in tqdm(loader, desc="Evaluating", leave=False):
             data = data.to(device)
             logits = model(data)
             if logits.shape[-1] == 1:

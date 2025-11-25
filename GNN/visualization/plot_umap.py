@@ -11,12 +11,17 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch_geometric.loader import DataLoader
+from tqdm.auto import tqdm
 
 import umap
 
 from GNN.utils.data_utils import load_split
 from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
 from GNN.models.models import build_pyg_lattice_model
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.svm import SVC
+
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from sklearn.svm import SVC
@@ -28,8 +33,8 @@ def main():
     parser.add_argument("--dataset", type=Path, default=Path("XYModel/blt_dataset/train.npz"))
     parser.add_argument("--output", type=Path, default=Path("GNN/artifacts/umap_embeddings.png"))
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--n-neighbors", type=int, default=50)
-    parser.add_argument("--min-dist", type=float, default=0.1)
+    parser.add_argument("--n-neighbors", type=int, default=15)
+    parser.add_argument("--min-dist", type=float, default=0)
     parser.add_argument("--metric", type=str, default="euclidean")
     args = parser.parse_args()
 
@@ -73,7 +78,7 @@ def main():
     temps_out = []
     labels_out = []
     with torch.no_grad():
-        for data in loader:
+        for data in tqdm(loader, desc="Embedding", leave=False):
             data = data.to(device)
             if hasattr(model, "embed"):
                 z = model.embed(data)
@@ -128,7 +133,7 @@ def main():
     best_labels = None
 
     for n_clusters in range_n_clusters:
-        clusterer = KMeans(n_clusters=n_clusters, random_state=42, n_init=10)
+        clusterer = KMeans(n_clusters=n_clusters, random_state=42, n_init=100)
         cluster_labels = clusterer.fit_transform(proj)
         # We use fit_predict or labels_ from fit. Using fit_predict here.
         cluster_labels = clusterer.fit_predict(proj)

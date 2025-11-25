@@ -19,6 +19,7 @@ import numpy as np
 import torch
 from sklearn.decomposition import PCA
 from torch_geometric.loader import DataLoader
+from tqdm.auto import tqdm
 
 from GNN.utils.data_utils import load_split
 from GNN.utils.lattice_utils import build_lattice_edge_index, infer_lattice_shape, load_metadata, make_lattice_graphs
@@ -31,7 +32,7 @@ def compute_embeddings(model: torch.nn.Module, loader: DataLoader, device: torch
     labels = []
     temps = []
     with torch.no_grad():
-        for data in loader:
+        for data in tqdm(loader, desc="Embedding", leave=False):
             data = data.to(device)
             if not hasattr(model, "embed"):
                 raise AttributeError("Model missing embed() needed for PCA extraction.")
