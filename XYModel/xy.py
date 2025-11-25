@@ -70,6 +70,41 @@ class XYModelMetropolisSimulation(BaseMetropolisSimulation):
             pos_list[i] += 1
             pos_list[i] %= self.L.shape[i]
         return -ans * self.J
+
+class GXYModelMetropolisSimulation(BaseMetropolisSimulation):
+    """gXY Metropolis simulation."""
+    def __init__(self, lattice_shape, beta, g, J=1, random_state=None):
+        self.g = g
+        super().__init__(lattice_shape, beta, J, random_state)
+
+    def compute_H(self):
+        H = 0
+        for i in range(self.L.shape[0]):
+            for j in range(self.L.shape[1]):
+                H -= self.g * np.cos(2 * np.pi * (self.L[i, j] - self.L[i, (j + 1) % self.L.shape[1]])) + (1 - self.g) * np.cos(4 * np.pi * (self.L[i, j] - self.L[i, (j + 1) % self.L.shape[1]]))
+                H -= self.g * np.cos(2 * np.pi * (self.L[i, j] - self.L[i, (j - 1) % self.L.shape[1]])) + (1 - self.g) * np.cos(4 * np.pi * (self.L[i, j] - self.L[i, (j - 1) % self.L.shape[1]]))
+                H -= self.g * np.cos(2 * np.pi * (self.L[i, j] - self.L[(i + 1) % self.L.shape[0], j])) + (1 - self.g) * np.cos(4 * np.pi * (self.L[i, j] - self.L[(i + 1) % self.L.shape[0], j]))
+                H -= self.g * np.cos(2 * np.pi * (self.L[i, j] - self.L[(i - 1) % self.L.shape[0], j])) + (1 - self.g) * np.cos(4 * np.pi * (self.L[i, j] - self.L[(i - 1) % self.L.shape[0], j]))
+        return H/2 * self.J    
+    
+    def _get_delta_H(self, pos, new_val):
+        ans = 0
+        old_val = self.L[pos]
+        pos_list = list(pos)
+        for i in range(len(pos)):
+            pos_list[i] += 1
+            pos_list[i] %= self.L.shape[i]
+            ans += self.g * np.cos(2 * np.pi * (self.L[tuple(pos_list)] - new_val)) \
+                    - self.g * np.cos(2 * np.pi * (self.L[tuple(pos_list)] - old_val)) + (1 - self.g) * np.cos(4 * np.pi * (self.L[tuple(pos_list)] - new_val)) \
+                    - (1 - self.g) * np.cos(4 * np.pi * (self.L[tuple(pos_list)] - old_val))
+            pos_list[i] -= 2
+            pos_list[i] %= self.L.shape[i]
+            ans += self.g * np.cos(2 * np.pi * (self.L[tuple(pos_list)] - new_val)) \
+                    - self.g * np.cos(2 * np.pi * (self.L[tuple(pos_list)] - old_val)) + (1 - self.g) * np.cos(4 * np.pi * (self.L[tuple(pos_list)] - new_val)) \
+                    - (1 - self.g) * np.cos(4 * np.pi * (self.L[tuple(pos_list)] - old_val))
+            pos_list[i] += 1
+            pos_list[i] %= self.L.shape[i]
+        return -ans * self.J
         
 
 def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, random_state=None):
