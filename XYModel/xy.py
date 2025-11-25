@@ -1,12 +1,19 @@
 import numpy as np
 from scipy.optimize import least_squares
 
+try:
+    import cupy as cp  # optional GPU backend
+except ImportError:  # pragma: no cover
+    cp = None
+
 class BaseMetropolisSimulation:
     """Base Metropolis sampler supporting custom energy calculations."""
 
-    def __init__(self, lattice_shape, beta, J=1, random_state=None):
+    def __init__(self, lattice_shape, beta, J=1, random_state=None, use_gpu: bool = False):
         self.beta = beta
-        self.rs = np.random.RandomState(seed=random_state)
+        self.use_gpu = bool(use_gpu and cp is not None)
+        self.xp = cp if self.use_gpu else np
+        self.rs = self.xp.random.RandomState(seed=random_state)
         self.L = self.rs.rand(*lattice_shape)
         self.lattice_shape = lattice_shape
         self.d = len(lattice_shape)
@@ -19,7 +26,7 @@ class BaseMetropolisSimulation:
         new_val = self.rs.rand()
         delta_H = self._get_delta_H(change_pos, new_val)
         if (delta_H > 0):
-            if (self.rs.rand() < np.exp(-self.beta * delta_H)):
+            if (self.rs.rand() < self.xp.exp(-self.beta * delta_H)):
                 self.L[change_pos] = new_val
                 self.H += delta_H / 2
         else:
@@ -40,6 +47,12 @@ class BaseMetropolisSimulation:
         """Compute the change in energy for a proposed update at position `pos` to `new_val`."""
         raise NotImplementedError
 
+    def to_numpy(self, array):
+        """Convert backend array to numpy (no-op for numpy backend)."""
+        if self.use_gpu and cp is not None:
+            return cp.asnumpy(array)
+        return np.asarray(array)
+
 
 
 class XYModelMetropolisSimulation(BaseMetropolisSimulation):
@@ -48,10 +61,10 @@ class XYModelMetropolisSimulation(BaseMetropolisSimulation):
         H = 0
         for i in range(self.L.shape[0]):
             for j in range(self.L.shape[1]):
-                H -= np.cos(2 * np.pi * (self.L[i, j] - self.L[i, (j + 1) % self.L.shape[1]]))
-                H -= np.cos(2 * np.pi * (self.L[i, j] - self.L[i, (j - 1) % self.L.shape[1]]))
-                H -= np.cos(2 * np.pi * (self.L[i, j] - self.L[(i + 1) % self.L.shape[0], j]))
-                H -= np.cos(2 * np.pi * (self.L[i, j] - self.L[(i - 1) % self.L.shape[0], j]))
+                H -= self.xp.cos(2 * np.pi * (self.L[i, j] - self.L[i, (j + 1) % self.L.shape[1]]))
+                H -= self.xp.cos(2 * np.pi * (self.L[i, j] - self.L[i, (j - 1) % self.L.shape[1]]))
+                H -= self.xp.cos(2 * np.pi * (self.L[i, j] - self.L[(i + 1) % self.L.shape[0], j]))
+                H -= self.xp.cos(2 * np.pi * (self.L[i, j] - self.L[(i - 1) % self.L.shape[0], j]))
         return H/2 * self.J    
 
     def _get_delta_H(self, pos, new_val):
@@ -118,8 +131,9 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
     X = np.arange(xy.L.size).reshape(xy.L.shape) % xy.L.shape[0]
     Y = (np.arange(xy.L.size).reshape(xy.L.shape) % xy.L.shape[1]).T
 
-    U = np.cos(2 * np.pi * xy.L)
-    V = np.sin(2 * np.pi * xy.L)
+    L_np = xy.to_numpy(xy.L)
+    U = np.cos(2 * np.pi * L_np)
+    V = np.sin(2 * np.pi * L_np)
 
     fig, ax = plt.subplots(1,1)
 
@@ -149,8 +163,9 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
 
         rects.set_array(np.array(colors))
 
-        U = np.cos(2 * np.pi * xy.L)
-        V = np.sin(2 * np.pi * xy.L)
+        L_np = xy.to_numpy(xy.L)
+        U = np.cos(2 * np.pi * L_np)
+        V = np.sin(2 * np.pi * L_np)
 
         Q.set_UVC(U,V)
 

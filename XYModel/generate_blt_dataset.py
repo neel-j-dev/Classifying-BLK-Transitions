@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
+from tqdm.auto import tqdm
 
 from xy import XYModelMetropolisSimulation
-from tqdm.auto import tqdm
 
 
 def extract_lattice_vectors(sim: XYModelMetropolisSimulation) -> np.ndarray:
@@ -30,6 +31,20 @@ def extract_lattice_vectors(sim: XYModelMetropolisSimulation) -> np.ndarray:
     return stacked.reshape(-1, 2)
 
 
+def _simulate_single(args_tuple):
+    temp, lattice_shape, steps, iters_per_step, coupling, seed = args_tuple
+    beta = 1.0 / temp
+    sim = XYModelMetropolisSimulation(
+        lattice_shape=lattice_shape,
+        beta=beta,
+        J=coupling,
+        random_state=seed,
+        use_gpu=True,
+    )
+    sim.simulate(steps=steps, iters_per_step=iters_per_step)
+    return extract_lattice_vectors(sim).reshape(-1), temp
+
+
 def generate_samples(
     min_temp: float,
     max_temp: float,
@@ -40,25 +55,23 @@ def generate_samples(
     iters_per_step: int,
     seed: int,
     coupling: float,
+    num_workers: int,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Run the XY simulation at many temperatures and collect observables."""
+    """Run the XY simulation at many temperatures and collect observables (parallelized)."""
 
     rng = np.random.default_rng(seed)
     temps = np.linspace(min_temp, max_temp, num_temps)
+    tasks = []
+    for temp in temps:
+        for _ in range(samples_per_temp):
+            tasks.append((temp, lattice_shape, steps, iters_per_step, coupling, rng.integers(0, 1_000_000_000)))
+
     records: List[np.ndarray] = []
     temp_targets: List[float] = []
 
-    for temp in tqdm(temps, desc="Generating samples"):
-        beta = 1.0 / temp
-        for _ in range(samples_per_temp):
-            sim = XYModelMetropolisSimulation(
-                lattice_shape=lattice_shape,
-                beta=beta,
-                J=coupling,
-                random_state=rng.integers(0, 1_000_000_000),
-            )
-            sim.simulate(steps=steps, iters_per_step=iters_per_step)
-            records.append(extract_lattice_vectors(sim).reshape(-1))
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        for features, temp in tqdm(executor.map(_simulate_single, tasks), total=len(tasks), desc="Generating samples"):
+            records.append(features)
             temp_targets.append(temp)
 
     return np.vstack(records), np.array(temp_targets)
@@ -98,6 +111,7 @@ def main():
     parser.add_argument("--train-ratio", type=float, default=0.7)
     parser.add_argument("--val-ratio", type=float, default=0.15)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--num-workers", type=int, default=4, help="Parallel workers for sample generation.")
     args = parser.parse_args()
 
     lattice_shape = (args.lattice_size, args.lattice_size)
@@ -112,6 +126,7 @@ def main():
         iters_per_step=args.iters_per_step,
         seed=args.seed,
         coupling=args.coupling,
+        num_workers=args.num_workers,
     )
 
     labels = (temps >= args.critical_temp).astype(np.int32)
