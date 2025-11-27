@@ -177,7 +177,7 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
     print("Saving animation...")
     plt.show()
 
-print("Generating XY model animation...")
-temp = 0.3
-GetXYAnimation((20, 20), 1/temp, 100, 1000, "xy_animation.mp4", J=1, random_state=None)
-
+if __name__ == "__main__":
+    print("Generating XY model animation...")
+    temp = 0.3
+    GetXYAnimation((20, 20), 1/temp, 100, 1000, "xy_animation.mp4", J=1, random_state=None)
