@@ -62,12 +62,12 @@ def _angle_fields(sim: bkt.XYModelMetropolisSimulation) -> Tuple[np.ndarray, np.
     return theta, lattice_vectors[..., 0], lattice_vectors[..., 1]
 
 
-def evolve_simulation(
-    sim: bkt.XYModelMetropolisSimulation, sweeps: int, updates_per_sweep: int
-) -> None:
-    """Advance the simulation by the requested number of sweeps."""
+def run_local_sweeps(sim: bkt.XYModelMetropolisSimulation, sweeps: int, updates_per_sweep: int) -> None:
+    """Advance only with local Metropolis updates (no global twist)."""
 
-    sim.simulate(steps=sweeps, iters_per_step=updates_per_sweep)
+    for _ in range(sweeps):
+        for _ in range(updates_per_sweep):
+            sim.make_step()
 
 
 def metropolis_evolution_panel(
@@ -101,53 +101,88 @@ def metropolis_evolution_panel(
     initial_nu_x, initial_nu_y = compute_winding_numbers(theta0)
     sim.H = sim.compute_H()
 
-    fig, axes = plt.subplots(2, n_snapshots, figsize=(4 * n_snapshots, 8))
+    fig, axes = plt.subplots(4, n_snapshots, figsize=(4 * n_snapshots, 12))
     updates_per_sweep = lattice_shape[0] * lattice_shape[1]
 
     # Let the system thermalize before taking any snapshots; important for low T.
     if burn_in_sweeps > 0:
-        evolve_simulation(sim, burn_in_sweeps, updates_per_sweep)
+        run_local_sweeps(sim, burn_in_sweeps, updates_per_sweep)
 
     for snap_idx in range(n_snapshots):
-        theta, U, V = _angle_fields(sim)
-        energy = compute_energy(theta, coupling)
-        nu_x_curr, nu_y_curr = compute_winding_numbers(theta)
+        theta_before, U_before, V_before = _angle_fields(sim)
+        energy_before = compute_energy(theta_before, coupling)
+        nu_x_before, nu_y_before = compute_winding_numbers(theta_before)
 
-        ax_top = axes[0, snap_idx]
-        im = ax_top.imshow(theta, cmap="hsv", vmin=0, vmax=2 * np.pi, interpolation="nearest")
+        ax_top_before = axes[0, snap_idx]
+        im_before = ax_top_before.imshow(theta_before, cmap="hsv", vmin=0, vmax=2 * np.pi, interpolation="nearest")
         sweep_num = burn_in_sweeps + snap_idx * sweeps_per_snapshot
-        ax_top.set_title(
-            f"Sweep {sweep_num}\nE = {energy:.1f}\nν = ({nu_x_curr:.2f}, {nu_y_curr:.2f})",
+        ax_top_before.set_title(
+            f"Sweep {sweep_num} (before twist)\nE = {energy_before:.1f}\nν = ({nu_x_before:.2f}, {nu_y_before:.2f})",
             fontsize=10,
         )
-        ax_top.set_xticks([])
-        ax_top.set_yticks([])
+        ax_top_before.set_xticks([])
+        ax_top_before.set_yticks([])
 
-        ax_bottom = axes[1, snap_idx]
+        ax_quiver_before = axes[1, snap_idx]
         step = max(1, lattice_size // 16)
         x = np.arange(0, lattice_size, step)
         y = np.arange(0, lattice_size, step)
         X, Y = np.meshgrid(x, y)
-        ax_bottom.quiver(
+        ax_quiver_before.quiver(
             X.flatten(),
             Y.flatten(),
-            U[::step, ::step].flatten(),
-            V[::step, ::step].flatten(),
-            theta[::step, ::step].flatten(),
+            U_before[::step, ::step].flatten(),
+            V_before[::step, ::step].flatten(),
+            theta_before[::step, ::step].flatten(),
             cmap="hsv",
             clim=(0, 2 * np.pi),
             scale=25,
             width=0.008,
         )
-        ax_bottom.set_xlim(-1, lattice_size)
-        ax_bottom.set_ylim(-1, lattice_size)
-        ax_bottom.set_aspect("equal")
-        ax_bottom.set_xticks([])
-        ax_bottom.set_yticks([])
+        ax_quiver_before.set_xlim(-1, lattice_size)
+        ax_quiver_before.set_ylim(-1, lattice_size)
+        ax_quiver_before.set_aspect("equal")
+        ax_quiver_before.set_xticks([])
+        ax_quiver_before.set_yticks([])
 
-        evolve_simulation(sim, sweeps_per_snapshot, updates_per_sweep)
+        # Attempt one global twist move and visualize the result.
+        sim.make_unwinding_step()
 
-    fig.colorbar(im, ax=axes[0, :], label="θ (rad)", shrink=0.7, pad=0.02)
+        theta_after, U_after, V_after = _angle_fields(sim)
+        energy_after = compute_energy(theta_after, coupling)
+        nu_x_after, nu_y_after = compute_winding_numbers(theta_after)
+
+        ax_top_after = axes[2, snap_idx]
+        im_after = ax_top_after.imshow(theta_after, cmap="hsv", vmin=0, vmax=2 * np.pi, interpolation="nearest")
+        ax_top_after.set_title(
+            f"After twist\nE = {energy_after:.1f}\nν = ({nu_x_after:.2f}, {nu_y_after:.2f})",
+            fontsize=10,
+        )
+        ax_top_after.set_xticks([])
+        ax_top_after.set_yticks([])
+
+        ax_quiver_after = axes[3, snap_idx]
+        ax_quiver_after.quiver(
+            X.flatten(),
+            Y.flatten(),
+            U_after[::step, ::step].flatten(),
+            V_after[::step, ::step].flatten(),
+            theta_after[::step, ::step].flatten(),
+            cmap="hsv",
+            clim=(0, 2 * np.pi),
+            scale=25,
+            width=0.008,
+        )
+        ax_quiver_after.set_xlim(-1, lattice_size)
+        ax_quiver_after.set_ylim(-1, lattice_size)
+        ax_quiver_after.set_aspect("equal")
+        ax_quiver_after.set_xticks([])
+        ax_quiver_after.set_yticks([])
+
+        # Advance locally to decorrelate before the next snapshot.
+        run_local_sweeps(sim, sweeps_per_snapshot, updates_per_sweep)
+
+    fig.colorbar(im_before, ax=axes[0, :], label="θ (rad)", shrink=0.7, pad=0.02)
     plt.suptitle(
         f"Metropolis Evolution: T/J = {temperature}, initial ν ≈ ({initial_nu_x:.2f}, {initial_nu_y:.2f})",
         fontsize=14,
