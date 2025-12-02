@@ -21,23 +21,31 @@ class BaseMetropolisSimulation:
         self.J = J
         self.H = self.compute_H()
 
+    def make_unwinding_step(self):
+        """Optional nonlocal move; subclasses may override."""
+        return
+
     def make_step(self):
         change_pos = tuple([self.rs.randint(_) for _ in self.lattice_shape])
-        new_val = self.rs.rand()
+        old_val = self.L[change_pos]
+        delta = (self.rs.rand() - 0.5) * 2 * 0.1
+        new_val = (old_val + delta) % 1.0
         delta_H = self._get_delta_H(change_pos, new_val)
         if (delta_H > 0):
             if (self.rs.rand() < self.xp.exp(-self.beta * delta_H)):
                 self.L[change_pos] = new_val
-                self.H += delta_H / 2
+                self.H += delta_H
         else:
             self.L[change_pos] = new_val
-            self.H += delta_H / 2
+            self.H += delta_H
         self.t += 1
 
     def simulate(self, steps, iters_per_step):
         for _ in range(steps):
             for _ in range(iters_per_step):
                 self.make_step()
+            # Attempt a global winding move after each sweep (if implemented).
+            self.make_unwinding_step()
 
     def compute_H(self):
         """Compute the total energy of the current lattice configuration."""
@@ -57,6 +65,18 @@ class BaseMetropolisSimulation:
 
 class XYModelMetropolisSimulation(BaseMetropolisSimulation):
     """XY Metropolis simulation; H_matrix is valid only for 2D model."""
+
+    def _energy_of_config(self, config):
+        """Compute energy for a given lattice configuration (normalized spins in [0,1))."""
+
+        angles = 2 * np.pi * config
+        # Count each bond once in +x and +y directions.
+        energy = -self.J * (
+            self.xp.cos(angles - self.xp.roll(angles, -1, axis=1))
+            + self.xp.cos(angles - self.xp.roll(angles, -1, axis=0))
+        ).sum()
+        return energy
+
     def compute_H(self):
         H = 0
         for i in range(self.L.shape[0]):
@@ -83,6 +103,32 @@ class XYModelMetropolisSimulation(BaseMetropolisSimulation):
             pos_list[i] += 1
             pos_list[i] %= self.L.shape[i]
         return -ans * self.J
+
+    def make_unwinding_step(self):
+        """Attempt a global twist move that changes the winding numbers."""
+
+        if len(self.lattice_shape) != 2:
+            return
+
+        h, w = self.lattice_shape
+        delta_wx = int(self.rs.randint(-1, 2))
+        delta_wy = int(self.rs.randint(-1, 2))
+        if delta_wx == 0 and delta_wy == 0:
+            return
+
+        x = self.xp.arange(w)
+        y = self.xp.arange(h)
+        X, Y = self.xp.meshgrid(x, y, indexing="xy")
+        twist = (delta_wx * X / w) + (delta_wy * Y / h)
+
+        proposal = (self.L + twist) % 1.0
+        H_new = self._energy_of_config(proposal)
+        delta_H = float(H_new - self.H)
+
+        if delta_H <= 0 or float(self.rs.rand()) < np.exp(-self.beta * delta_H):
+            self.L = proposal
+            self.H = H_new
+        self.t += 1
 
 class GXYModelMetropolisSimulation(BaseMetropolisSimulation):
     """gXY Metropolis simulation."""
