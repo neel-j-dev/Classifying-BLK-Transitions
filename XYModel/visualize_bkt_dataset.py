@@ -10,12 +10,8 @@ from typing import Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-from . import xy as xy_module
-
-# The dataset generator imports `xy` as a top-level module; register it so the import works
-# when running this file as a module.
-sys.modules.setdefault("xy", xy_module)
-from . import generate_bkt_dataset as bkt
+import xy as xy_module
+import generate_bkt_dataset as bkt
 
 def _initialize_with_winding(lattice_shape: Tuple[int, int], nu_x: int, nu_y: int) -> np.ndarray:
     """Create a normalized lattice with a linear phase twist that sets the winding numbers."""
