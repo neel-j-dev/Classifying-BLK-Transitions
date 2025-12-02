@@ -78,6 +78,9 @@ def metropolis_evolution_panel(
     n_snapshots: int = 6,
     sweeps_per_snapshot: int = 200,
     burn_in_sweeps: int = 0,
+    twist_attempts: int = 3,
+    twist_beta_scale: float = 1.0,
+    show_rejected_proposal: bool = False,
     nu_x_init: int = 0,
     nu_y_init: int = 0,
     seed: int | None = None,
@@ -91,6 +94,7 @@ def metropolis_evolution_panel(
         J=coupling,
         random_state=seed,
         use_gpu=False,
+        twist_beta_scale=twist_beta_scale,
     )
 
     # Seed the lattice with a prescribed winding, then let Metropolis evolve freely.
@@ -109,6 +113,7 @@ def metropolis_evolution_panel(
         run_local_sweeps(sim, burn_in_sweeps, updates_per_sweep)
 
     for snap_idx in range(n_snapshots):
+        lattice_before = sim.to_numpy(sim.L)
         theta_before, U_before, V_before = _angle_fields(sim)
         energy_before = compute_energy(theta_before, coupling)
         nu_x_before, nu_y_before = compute_winding_numbers(theta_before)
@@ -145,17 +150,38 @@ def metropolis_evolution_panel(
         ax_quiver_before.set_xticks([])
         ax_quiver_before.set_yticks([])
 
-        # Attempt one global twist move and visualize the result.
-        sim.make_unwinding_step()
+        # Attempt a global twist move (force nonzero to visualize effect).
+        twist_info = {"accepted": False, "delta_wx": 0, "delta_wy": 0, "delta_H": 0.0}
+        for _ in range(max(1, twist_attempts)):
+            twist_info = sim.make_unwinding_step(force_nonzero=True)
+            if twist_info.get("accepted"):
+                break
 
         theta_after, U_after, V_after = _angle_fields(sim)
         energy_after = compute_energy(theta_after, coupling)
         nu_x_after, nu_y_after = compute_winding_numbers(theta_after)
 
+        if show_rejected_proposal and not twist_info.get("accepted"):
+            # Visualize the proposed twist even if rejected to highlight its effect.
+            delta_wx = twist_info.get("delta_wx", 0)
+            delta_wy = twist_info.get("delta_wy", 0)
+            h, w = lattice_shape
+            x = np.arange(w)[None, :]
+            y = np.arange(h)[:, None]
+            twist_grid = (delta_wx * x / w) + (delta_wy * y / h)
+            proposal = (lattice_before + twist_grid) % 1.0
+            theta_after = np.mod(2 * np.pi * proposal, 2 * np.pi)
+            U_after = np.cos(theta_after)
+            V_after = np.sin(theta_after)
+            energy_after = compute_energy(theta_after, coupling)
+            nu_x_after, nu_y_after = compute_winding_numbers(theta_after)
+
         ax_top_after = axes[2, snap_idx]
         im_after = ax_top_after.imshow(theta_after, cmap="hsv", vmin=0, vmax=2 * np.pi, interpolation="nearest")
+        twist_status = "✓ accepted" if twist_info.get("accepted") else "× rejected"
         ax_top_after.set_title(
-            f"After twist\nE = {energy_after:.1f}\nν = ({nu_x_after:.2f}, {nu_y_after:.2f})",
+            f"After twist (dWx={twist_info.get('delta_wx',0)}, dWy={twist_info.get('delta_wy',0)}, {twist_status})\n"
+            f"E = {energy_after:.1f}\nν = ({nu_x_after:.2f}, {nu_y_after:.2f})",
             fontsize=10,
         )
         ax_top_after.set_xticks([])
@@ -208,6 +234,23 @@ def parse_args() -> argparse.Namespace:
         default=5000,
         help="Thermalization sweeps before the first snapshot (each sweep = lattice_size^2 updates).",
     )
+    parser.add_argument(
+        "--twist-attempts",
+        type=int,
+        default=3,
+        help="Number of global twist proposals to try before each 'after' snapshot.",
+    )
+    parser.add_argument(
+        "--twist-beta-scale",
+        type=float,
+        default=1.0,
+        help="Multiplier on beta for twist acceptance; <1.0 makes twists easier to accept (for visualization/ergodicity).",
+    )
+    parser.add_argument(
+        "--show-rejected-proposal",
+        action="store_true",
+        help="If set, the 'after twist' panel will visualize the proposed twist even when rejected.",
+    )
     parser.add_argument("--coupling", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -231,6 +274,9 @@ def main() -> None:
             n_snapshots=args.snapshots,
             sweeps_per_snapshot=args.sweeps_per_snapshot,
             burn_in_sweeps=args.burn_in_sweeps,
+            twist_attempts=args.twist_attempts,
+            twist_beta_scale=args.twist_beta_scale,
+            show_rejected_proposal=args.show_rejected_proposal,
             nu_x_init=args.nu_x,
             nu_y_init=args.nu_y,
             seed=args.seed,

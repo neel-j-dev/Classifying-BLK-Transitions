@@ -9,7 +9,15 @@ except ImportError:  # pragma: no cover
 class BaseMetropolisSimulation:
     """Base Metropolis sampler supporting custom energy calculations."""
 
-    def __init__(self, lattice_shape, beta, J=1, random_state=None, use_gpu: bool = False):
+    def __init__(
+        self,
+        lattice_shape,
+        beta,
+        J=1,
+        random_state=None,
+        use_gpu: bool = False,
+        twist_beta_scale: float = 1.0,
+    ):
         self.beta = beta
         self.use_gpu = bool(use_gpu and cp is not None)
         self.xp = cp if self.use_gpu else np
@@ -19,11 +27,15 @@ class BaseMetropolisSimulation:
         self.d = len(lattice_shape)
         self.t = 0
         self.J = J
+        self.twist_beta_scale = twist_beta_scale
         self.H = self.compute_H()
 
-    def make_unwinding_step(self):
-        """Optional nonlocal move; subclasses may override."""
-        return
+    def make_unwinding_step(self, force_nonzero: bool = False):
+        """Optional nonlocal move; subclasses may override.
+
+        Returns a dict with acceptance metadata so callers can visualize/debug.
+        """
+        return {"accepted": False, "delta_wx": 0, "delta_wy": 0, "delta_H": 0.0}
 
     def make_step(self):
         change_pos = tuple([self.rs.randint(_) for _ in self.lattice_shape])
@@ -104,17 +116,23 @@ class XYModelMetropolisSimulation(BaseMetropolisSimulation):
             pos_list[i] %= self.L.shape[i]
         return -ans * self.J
 
-    def make_unwinding_step(self):
+    def make_unwinding_step(self, force_nonzero: bool = False):
         """Attempt a global twist move that changes the winding numbers."""
 
         if len(self.lattice_shape) != 2:
-            return
+            return {"accepted": False, "delta_wx": 0, "delta_wy": 0, "delta_H": 0.0}
 
         h, w = self.lattice_shape
         delta_wx = int(self.rs.randint(-1, 2))
         delta_wy = int(self.rs.randint(-1, 2))
+
+        if force_nonzero and delta_wx == 0 and delta_wy == 0:
+            # Retry once to avoid a no-op proposal for visualization purposes.
+            delta_wx = int(self.rs.choice([-1, 1]))
+            delta_wy = int(self.rs.choice([-1, 1]))
+
         if delta_wx == 0 and delta_wy == 0:
-            return
+            return {"accepted": False, "delta_wx": 0, "delta_wy": 0, "delta_H": 0.0}
 
         x = self.xp.arange(w)
         y = self.xp.arange(h)
@@ -125,10 +143,14 @@ class XYModelMetropolisSimulation(BaseMetropolisSimulation):
         H_new = self._energy_of_config(proposal)
         delta_H = float(H_new - self.H)
 
-        if delta_H <= 0 or float(self.rs.rand()) < np.exp(-self.beta * delta_H):
+        effective_beta = self.beta * self.twist_beta_scale
+        accepted = False
+        if delta_H <= 0 or float(self.rs.rand()) < np.exp(-effective_beta * delta_H):
             self.L = proposal
             self.H = H_new
+            accepted = True
         self.t += 1
+        return {"accepted": accepted, "delta_wx": delta_wx, "delta_wy": delta_wy, "delta_H": delta_H}
 
 class GXYModelMetropolisSimulation(BaseMetropolisSimulation):
     """gXY Metropolis simulation."""
