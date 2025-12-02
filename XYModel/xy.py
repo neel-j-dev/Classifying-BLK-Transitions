@@ -22,13 +22,17 @@ class BaseMetropolisSimulation:
         self.use_gpu = bool(use_gpu and cp is not None)
         self.xp = cp if self.use_gpu else np
         self.rs = self.xp.random.RandomState(seed=random_state)
-        self.L = self.rs.rand(*lattice_shape)
         self.lattice_shape = lattice_shape
+        self.initialize_lattice()
+        self.t = 0  # track number of Metropolis updates performed
         self.d = len(lattice_shape)
-        self.t = 0
         self.J = J
         self.twist_beta_scale = twist_beta_scale
         self.H = self.compute_H()
+
+    def initialize_lattice(self):
+        """Initialize the lattice to a given initial configuration."""
+        return NotImplementedError
 
     def make_unwinding_step(self, force_nonzero: bool = False):
         """Optional nonlocal move; subclasses may override.
@@ -57,7 +61,7 @@ class BaseMetropolisSimulation:
             for _ in range(iters_per_step):
                 self.make_step()
             # Attempt a global winding move after each sweep (if implemented).
-            self.make_unwinding_step()
+                self.make_unwinding_step()
 
     def compute_H(self):
         """Compute the total energy of the current lattice configuration."""
@@ -77,6 +81,16 @@ class BaseMetropolisSimulation:
 
 class XYModelMetropolisSimulation(BaseMetropolisSimulation):
     """XY Metropolis simulation; H_matrix is valid only for 2D model."""
+
+    def initialize_lattice(self):
+        self.L = self.rs.rand(*self.lattice_shape)
+        # p = self.rs.randint(0, 3)
+            
+        # h, w = self.lattice_shape
+        # x = np.arange(w)[None, :]
+        # y = np.arange(h)[:, None]
+        # phase = (nu_x * x / w) + (nu_y * y / h)
+        # return np.mod(phase, 1.0).astype(np.float64)
 
     def _energy_of_config(self, config):
         """Compute energy for a given lattice configuration (normalized spins in [0,1))."""
@@ -193,6 +207,7 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
     import matplotlib.animation as animation
     import matplotlib.patches as patches
     from matplotlib.collections import PatchCollection
+    import matplotlib
 
     xy = XYModelMetropolisSimulation(lattice_shape=lattice_shape, beta=beta, J=J, random_state=random_state)
 
@@ -239,13 +254,24 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
 
         return rects, Q,
 
-    ani = animation.FuncAnimation(fig, update_quiver, frames=steps, fargs=(rects, Q, iters_per_step, xy),
-                                   interval=25, blit=False)
+    ani = animation.FuncAnimation(
+        fig,
+        update_quiver,
+        frames=steps,
+        fargs=(rects, Q, iters_per_step, xy),
+        interval=25,
+        blit=False,
+    )
 
-    print("Saving animation...")
-    plt.show()
+    writer = animation.PillowWriter(fps=max(1, int(1000 / 25)))
+    print(f"Saving animation to {filename} ...")
+    ani.save(filename, writer=writer)
+
+    # Avoid keeping GUI open when running headless; close figure after saving.
+    plt.close(fig)
+    return filename
 
 if __name__ == "__main__":
     print("Generating XY model animation...")
     temp = 0.3
-    GetXYAnimation((20, 20), 1/temp, 100, 1000, "xy_animation.mp4", J=1, random_state=None)
+    GetXYAnimation((20, 20), 1/temp, 100, 1000, "xy_animation.gif", J=1, random_state=None)
