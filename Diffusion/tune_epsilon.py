@@ -18,6 +18,7 @@ from typing import Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 from scipy.spatial.distance import pdist
 from sklearn.cluster import KMeans
+from joblib import Parallel, delayed
 
 from diffusion_map import (
     compute_eigendecomposition,
@@ -78,39 +79,67 @@ def scan_resolution_and_clusters(
     t: int = 1,
     n_components: int = 15,
     random_state: Optional[int] = 0,
+    n_jobs: Optional[int] = None,
+    use_torch: bool = False,
+    device: Optional[str] = None,
 ) -> Tuple[TuningResult, List[TuningResult], np.ndarray]:
     """Evaluate adjusted MSE over a grid of epsilon and k-means cluster counts."""
     results: List[TuningResult] = []
     best: Optional[TuningResult] = None
     mse_surface = np.full((len(cluster_options), len(epsilon_values)), np.nan)
 
-    for eps_idx, eps in enumerate(epsilon_values):
-        K = compute_gaussian_kernel(X, epsilon=eps, N=X.shape[1])
+    def _evaluate_single_epsilon(eps_idx: int, eps: float) -> Tuple[int, List[TuningResult]]:
+        K = compute_gaussian_kernel(
+            X,
+            epsilon=eps,
+            N=X.shape[1],
+            use_torch=use_torch,
+            device=device,
+            return_torch=False,
+        )
         P = construct_transition_matrix(K)
         evals, evecs = compute_eigendecomposition(
-            P, n_components=min(n_components, X.shape[0] - 1)
+            P,
+            n_components=min(n_components, X.shape[0] - 1),
+            use_torch=use_torch,
+            device=device,
+            return_torch=False,
         )
         n_dims = min(3, len(evals) - 1)
         embedding = construct_diffusion_map_embedding(
             evals, evecs, n_dimensions=n_dims, t=t, skip_first=True
         )
 
+        eps_results: List[TuningResult] = []
         for n_idx, n_clusters in enumerate(cluster_options):
             kmeans = KMeans(n_clusters=n_clusters, n_init=10, random_state=random_state)
             labels = kmeans.fit_predict(embedding)
             mse_val = adjusted_mse(K, labels)
-            result = TuningResult(
-                epsilon=eps,
-                n_clusters=n_clusters,
-                mse=mse_val,
-                epsilon_idx=eps_idx,
-                cluster_idx=n_idx,
-                eigenvalues=evals,
-                labels=labels,
+            eps_results.append(
+                TuningResult(
+                    epsilon=eps,
+                    n_clusters=n_clusters,
+                    mse=mse_val,
+                    epsilon_idx=eps_idx,
+                    cluster_idx=n_idx,
+                    eigenvalues=evals,
+                    labels=labels,
+                )
             )
+        return eps_idx, eps_results
+
+    if n_jobs is None or n_jobs == 1:
+        eps_outputs = [_evaluate_single_epsilon(idx, eps) for idx, eps in enumerate(epsilon_values)]
+    else:
+        eps_outputs = Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(_evaluate_single_epsilon)(idx, eps) for idx, eps in enumerate(epsilon_values)
+        )
+
+    for eps_idx, eps_results in eps_outputs:
+        for result in eps_results:
             results.append(result)
-            mse_surface[n_idx, eps_idx] = mse_val
-            if best is None or mse_val < best.mse:
+            mse_surface[result.cluster_idx, eps_idx] = result.mse
+            if best is None or result.mse < best.mse:
                 best = result
 
     if best is None:
@@ -126,6 +155,9 @@ def tune_epsilon(
     random_state: Optional[int] = 0,
     t: int = 1,
     n_components: int = 15,
+    n_jobs: Optional[int] = None,
+    use_torch: bool = False,
+    device: Optional[str] = None,
 ) -> Tuple[TuningResult, List[TuningResult], np.ndarray, np.ndarray]:
     """End-to-end helper: subsample, build epsilon grid, and run the heuristic."""
     rng = np.random.default_rng(random_state)
@@ -146,6 +178,9 @@ def tune_epsilon(
         t=t,
         n_components=n_components,
         random_state=random_state,
+        n_jobs=n_jobs,
+        use_torch=use_torch,
+        device=device,
     )
     return best, results, mse_surface, epsilon_values
 
@@ -193,6 +228,23 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         help="Random seed for subsampling and k-means.",
     )
     parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=-1,
+        help="Number of parallel workers for the epsilon/k scan (joblib backend).",
+    )
+    parser.add_argument(
+        "--use-torch",
+        action="store_true",
+        help="Use PyTorch (and CUDA if available) for kernel and eigendecomposition.",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default=None,
+        help="Optional torch device (e.g., 'cuda' or 'cuda:0'). Defaults to CUDA when available.",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -207,6 +259,9 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         epsilon_values=args.epsilons,
         max_samples=args.max_samples,
         random_state=args.random_state,
+        n_jobs=args.n_jobs,
+        use_torch=args.use_torch,
+        device=args.device,
     )
 
     print("Tuning complete.")

@@ -16,8 +16,20 @@ from scipy.sparse.linalg import eigs
 from typing import Tuple, Optional, Dict
 import warnings
 
+try:  # Optional GPU backend via PyTorch
+    import torch
+except ImportError:  # pragma: no cover
+    torch = None
 
-def compute_gaussian_kernel(X: np.ndarray, epsilon: float, N: int = 1024) -> np.ndarray:
+
+def compute_gaussian_kernel(
+    X: np.ndarray,
+    epsilon: float,
+    N: int = 1024,
+    use_torch: bool = False,
+    device: Optional[str] = None,
+    return_torch: bool = False,
+) -> np.ndarray:
     """
     Compute the Gaussian kernel matrix K from input samples.
 
@@ -40,16 +52,23 @@ def compute_gaussian_kernel(X: np.ndarray, epsilon: float, N: int = 1024) -> np.
     The kernel is computed as: K_ij = exp(-||x_i - x_j||^2 / (2 * N * epsilon))
     Following the paper's specification for the XY model diffusion map analysis.
     """
-    # Compute pairwise squared Euclidean distances
+    if use_torch:
+        if torch is None:  # pragma: no cover
+            raise ImportError("PyTorch is not installed; cannot use GPU backend.")
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        X_t = torch.as_tensor(X, device=device, dtype=torch.float64)
+        pairwise_sq_dists = torch.cdist(X_t, X_t, p=2) ** 2
+        K_t = torch.exp(-pairwise_sq_dists / (2.0 * N * epsilon))
+        if return_torch:
+            return K_t
+        return K_t.cpu().numpy()
+
     pairwise_sq_dists = squareform(pdist(X, metric='sqeuclidean'))
-
-    # Compute Gaussian kernel with specified normalization
     K = np.exp(-pairwise_sq_dists / (2.0 * N * epsilon))
-
     return K
 
 
-def construct_transition_matrix(K: np.ndarray) -> np.ndarray:
+def construct_transition_matrix(K):
     """
     Construct the row-stochastic transition matrix P from the kernel matrix K.
 
@@ -68,22 +87,29 @@ def construct_transition_matrix(K: np.ndarray) -> np.ndarray:
     The transition matrix is constructed by normalizing each row of K:
     P_ij = K_ij / sum_j(K_ij)
     """
-    # Compute row sums of kernel matrix
-    row_sums = K.sum(axis=1, keepdims=True)
+    if torch is not None and isinstance(K, torch.Tensor):
+        row_sums = K.sum(dim=1, keepdim=True)
+        if torch.any(row_sums == 0):
+            warnings.warn("Warning: Some rows of kernel matrix sum to zero.")
+            row_sums = torch.where(row_sums == 0, torch.ones_like(row_sums), row_sums)
+        P = K / row_sums
+        return P
 
-    # Check for zero row sums
+    row_sums = K.sum(axis=1, keepdims=True)
     if np.any(row_sums == 0):
         warnings.warn("Warning: Some rows of kernel matrix sum to zero.")
         row_sums[row_sums == 0] = 1.0
 
-    # Normalize rows to create row-stochastic matrix
     P = K / row_sums
 
     return P
 
 
-def compute_eigendecomposition(P: np.ndarray, n_components: int = 10, 
-                                use_sparse: bool = False) -> Tuple[np.ndarray, np.ndarray]:
+def compute_eigendecomposition(P, n_components: int = 10,
+                                use_sparse: bool = False,
+                                use_torch: bool = False,
+                                device: Optional[str] = None,
+                                return_torch: bool = False) -> Tuple[np.ndarray, np.ndarray]:
     """
     Compute eigenvalues and right eigenvectors of the transition matrix P.
 
@@ -105,6 +131,35 @@ def compute_eigendecomposition(P: np.ndarray, n_components: int = 10,
     """
     n_samples = P.shape[0]
 
+    if use_torch or (torch is not None and isinstance(P, torch.Tensor)):
+        if torch is None:  # pragma: no cover
+            raise ImportError("PyTorch is not installed; cannot use GPU backend.")
+        device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        P_t = P if isinstance(P, torch.Tensor) else torch.as_tensor(P, device=device, dtype=torch.float64)
+        if use_sparse:
+            raise ValueError("Sparse eigendecomposition is not supported with the torch backend.")
+
+        eigenvalues, eigenvectors = torch.linalg.eig(P_t.T)
+        idx = torch.argsort(torch.abs(eigenvalues), descending=True)
+        eigenvalues = eigenvalues[idx]
+        eigenvectors = eigenvectors[:, idx]
+
+        if n_components < n_samples:
+            eigenvalues = eigenvalues[:n_components]
+            eigenvectors = eigenvectors[:, :n_components]
+
+        if not return_torch:
+            eigenvalues_np = eigenvalues.detach().cpu().numpy()
+            eigenvectors_np = eigenvectors.detach().cpu().numpy()
+            if np.allclose(eigenvalues_np.imag, 0):
+                eigenvalues_np = eigenvalues_np.real
+            if np.allclose(eigenvectors_np.imag, 0):
+                eigenvectors_np = eigenvectors_np.real
+            return eigenvalues_np, eigenvectors_np
+
+        # For torch return type, keep complex dtype; caller can convert if desired.
+        return eigenvalues, eigenvectors
+
     if use_sparse and n_components < n_samples:
         eigenvalues, eigenvectors = eigs(P.T, k=n_components, which='LM')
         idx = np.argsort(np.abs(eigenvalues))[::-1]
@@ -120,7 +175,6 @@ def compute_eigendecomposition(P: np.ndarray, n_components: int = 10,
             eigenvalues = eigenvalues[:n_components]
             eigenvectors = eigenvectors[:, :n_components]
 
-    # Convert to real if eigenvalues are real (within numerical precision)
     if np.allclose(eigenvalues.imag, 0):
         eigenvalues = eigenvalues.real
     if np.allclose(eigenvectors.imag, 0):
@@ -129,9 +183,9 @@ def compute_eigendecomposition(P: np.ndarray, n_components: int = 10,
     return eigenvalues, eigenvectors
 
 
-def construct_diffusion_map_embedding(eigenvalues: np.ndarray, eigenvectors: np.ndarray, 
+def construct_diffusion_map_embedding(eigenvalues, eigenvectors,
                                        n_dimensions: int = 3, t: int = 1,
-                                       skip_first: bool = True) -> np.ndarray:
+                                       skip_first: bool = True):
     """
     Construct diffusion map coordinates (embedding) from eigenvectors and eigenvalues.
 
@@ -168,16 +222,19 @@ def construct_diffusion_map_embedding(eigenvalues: np.ndarray, eigenvectors: np.
     selected_eigenvalues = eigenvalues[start_idx:end_idx]
     selected_eigenvectors = eigenvectors[:, start_idx:end_idx]
 
-    # Construct diffusion map embedding: phi_l = lambda_l^t * psi_l
-    embedding = selected_eigenvectors * (selected_eigenvalues ** t)
+    if torch is not None and (isinstance(selected_eigenvalues, torch.Tensor) or isinstance(selected_eigenvectors, torch.Tensor)):
+        embedding = selected_eigenvectors * (selected_eigenvalues ** t)
+        return embedding
 
+    embedding = selected_eigenvectors * (selected_eigenvalues ** t)
     return embedding
 
 
 def diffusion_map(X: np.ndarray, epsilon: float, n_components: int = 10, 
                   n_dimensions: int = 3, t: int = 1, N: int = 1024,
                   use_sparse: bool = False, skip_first: bool = True,
-                  verbose: bool = True) -> Dict[str, np.ndarray]:
+                  verbose: bool = True, use_torch: bool = False,
+                  device: Optional[str] = None, return_torch: bool = False) -> Dict[str, np.ndarray]:
     """
     Complete diffusion map pipeline from data to embedding.
 
@@ -201,6 +258,14 @@ def diffusion_map(X: np.ndarray, epsilon: float, n_components: int = 10,
         Whether to skip the first (trivial) eigenvector in the embedding
     verbose : bool, default=True
         Whether to print progress messages
+    use_torch : bool, default=False
+        If True and a CUDA-enabled PyTorch is available, compute kernel and
+        eigendecomposition on GPU.
+    device : str or None, default=None
+        PyTorch device to use when `use_torch` is True. Defaults to "cuda" when
+        available, otherwise "cpu".
+    return_torch : bool, default=False
+        If True and `use_torch` is enabled, return torch tensors instead of numpy arrays.
 
     Returns
     -------
@@ -215,13 +280,43 @@ def diffusion_map(X: np.ndarray, epsilon: float, n_components: int = 10,
     if verbose:
         print("Computing diffusion map...")
 
-    K = compute_gaussian_kernel(X, epsilon=epsilon, N=N)
+    K = compute_gaussian_kernel(
+        X,
+        epsilon=epsilon,
+        N=N,
+        use_torch=use_torch,
+        device=device,
+        return_torch=return_torch,
+    )
     P = construct_transition_matrix(K)
-    eigenvalues, eigenvectors = compute_eigendecomposition(P, n_components=n_components, 
-                                                           use_sparse=use_sparse)
-    embedding = construct_diffusion_map_embedding(eigenvalues, eigenvectors, 
-                                                   n_dimensions=n_dimensions, t=t,
-                                                   skip_first=skip_first)
+    eigenvalues, eigenvectors = compute_eigendecomposition(
+        P,
+        n_components=n_components,
+        use_sparse=use_sparse,
+        use_torch=use_torch or isinstance(P, (torch.Tensor,)) if torch is not None else use_torch,
+        device=device,
+        return_torch=return_torch,
+    )
+    embedding = construct_diffusion_map_embedding(
+        eigenvalues,
+        eigenvectors,
+        n_dimensions=n_dimensions,
+        t=t,
+        skip_first=skip_first,
+    )
+
+    if not return_torch and torch is not None:
+        # Ensure numpy outputs for compatibility with scikit-learn.
+        if isinstance(embedding, torch.Tensor):
+            embedding = embedding.detach().cpu().numpy()
+        if isinstance(eigenvalues, torch.Tensor):
+            eigenvalues = eigenvalues.detach().cpu().numpy()
+        if isinstance(eigenvectors, torch.Tensor):
+            eigenvectors = eigenvectors.detach().cpu().numpy()
+        if isinstance(K, torch.Tensor):
+            K = K.detach().cpu().numpy()
+        if isinstance(P, torch.Tensor):
+            P = P.detach().cpu().numpy()
 
     if verbose:
         print(f"Diffusion map complete: embedding shape = {embedding.shape}")
