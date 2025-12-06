@@ -58,13 +58,13 @@ def compute_gaussian_kernel(
         device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         X_t = torch.as_tensor(X, device=device, dtype=torch.float64)
         pairwise_sq_dists = torch.cdist(X_t, X_t, p=2) ** 2
-        K_t = torch.exp(-pairwise_sq_dists / (2.0 * N * epsilon))
+        K_t = torch.exp(-pairwise_sq_dists / (epsilon))
         if return_torch:
             return K_t
         return K_t.cpu().numpy()
 
     pairwise_sq_dists = squareform(pdist(X, metric='sqeuclidean'))
-    K = np.exp(-pairwise_sq_dists / (2.0 * N * epsilon))
+    K = np.exp(-pairwise_sq_dists / (epsilon))
     return K
 
 

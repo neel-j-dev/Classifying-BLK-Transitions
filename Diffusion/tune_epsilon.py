@@ -46,11 +46,23 @@ def adjusted_mse(K: np.ndarray, labels: np.ndarray) -> float:
     n_clusters = len(unique_labels)
     ideal = (labels[:, None] == labels[None, :]).astype(float)
     diff_sq = (K - ideal) ** 2
+
     mse = 0.0
     for lbl in unique_labels:
-        mask = labels == lbl
-        # Weight each cluster equally regardless of size.
-        mse += diff_sq[mask].sum() / mask.sum()
+        cluster_error = 0.0
+        for i in labels: 
+            if  i != lbl:
+                continue
+            for j in range(len(diff_sq[i])): 
+                cluster_error += diff_sq[i][j]
+        mse += cluster_error / len(labels[labels == lbl])
+
+        # mask = labels == lbl
+        # # Weight each cluster equally regardless of size.
+        # mse += diff_sq[mask].sum() / mask.sum()
+
+        # print(diff_sq[mask, :])
+        # print(np.max(diff_sq[mask, :]))
     return (n_clusters - 1) / n_clusters * mse
 
 
@@ -109,6 +121,7 @@ def scan_resolution_and_clusters(
         embedding = construct_diffusion_map_embedding(
             evals, evecs, n_dimensions=n_dims, t=t, skip_first=True
         )
+        embedding = np.real_if_close(embedding)
 
         eps_results: List[TuningResult] = []
         for n_idx, n_clusters in enumerate(cluster_options):
