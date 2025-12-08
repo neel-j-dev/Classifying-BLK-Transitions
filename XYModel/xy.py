@@ -61,7 +61,7 @@ class BaseMetropolisSimulation:
             for _ in range(iters_per_step):
                 self.make_step()
             # Attempt a global winding move after each sweep (if implemented).
-                self.make_unwinding_step()
+                # self.make_unwinding_step()
 
     def compute_H(self):
         """Compute the total energy of the current lattice configuration."""
@@ -273,5 +273,5 @@ def GetXYAnimation(lattice_shape, beta, steps, iters_per_step, filename, J=1, ra
 
 if __name__ == "__main__":
     print("Generating XY model animation...")
-    temp = 0.3
-    GetXYAnimation((20, 20), 1/temp, 100, 1000, "xy_animation.gif", J=1, random_state=None)
+    temp = 0.1
+    GetXYAnimation((100, 100), 1/temp, 100, 1000, "xy_animation.gif", J=1, random_state=None)
