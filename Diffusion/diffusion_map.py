@@ -11,15 +11,31 @@ Author: Generated for reproducibility study
 """
 
 import numpy as np
-from scipy.spatial.distance import pdist, squareform
-from scipy.sparse.linalg import eigs
 from typing import Tuple, Optional, Dict
 import warnings
+
+try:
+    from scipy.spatial.distance import pdist, squareform  # type: ignore
+except ImportError:  # pragma: no cover
+    pdist = squareform = None  # type: ignore
+
+try:
+    from scipy.sparse.linalg import eigs  # type: ignore
+except ImportError:  # pragma: no cover
+    eigs = None  # type: ignore
 
 try:  # Optional GPU backend via PyTorch
     import torch
 except ImportError:  # pragma: no cover
     torch = None
+
+
+def _pairwise_sq_dists_numpy(X: np.ndarray) -> np.ndarray:
+    """Compute a full pairwise squared-distance matrix without SciPy."""
+    norms = np.sum(X ** 2, axis=1, keepdims=True)
+    dists = norms + norms.T - 2 * X @ X.T
+    np.maximum(dists, 0.0, out=dists)
+    return dists
 
 
 def compute_gaussian_kernel(
@@ -63,7 +79,10 @@ def compute_gaussian_kernel(
             return K_t
         return K_t.cpu().numpy()
 
-    pairwise_sq_dists = squareform(pdist(X, metric='sqeuclidean'))
+    if pdist is not None and squareform is not None:
+        pairwise_sq_dists = squareform(pdist(X, metric='sqeuclidean'))
+    else:  # fallback when SciPy isn't installed
+        pairwise_sq_dists = _pairwise_sq_dists_numpy(X)
     K = np.exp(-pairwise_sq_dists / (epsilon))
     return K
 
@@ -161,6 +180,8 @@ def compute_eigendecomposition(P, n_components: int = 10,
         return eigenvalues, eigenvectors
 
     if use_sparse and n_components < n_samples:
+        if eigs is None:  # pragma: no cover
+            raise ImportError("scipy is required for sparse eigendecomposition.")
         eigenvalues, eigenvectors = eigs(P.T, k=n_components, which='LM')
         idx = np.argsort(np.abs(eigenvalues))[::-1]
         eigenvalues = eigenvalues[idx]
