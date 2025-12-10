@@ -2,6 +2,11 @@ from classical import BaseMetropolisSimulation
 
 class XYModelMetropolisSimulation(BaseMetropolisSimulation):
     """XY Metropolis simulation; H_matrix is valid only for 2D model."""
+    def __init__(self, lattice_shape, random_state=None, use_gpu=False, J=1.0, beta=1.0):
+        super().__init__(lattice_shape, random_state, use_gpu=use_gpu)
+        self.J = float(J)
+        self.beta = float(beta)
+        self.initialize_lattice()
 
     def initialize_lattice(self):
         self.L = self.rs.rand(*self.lattice_shape)
@@ -59,7 +64,17 @@ class XYModelMetropolisSimulation(BaseMetropolisSimulation):
         self._metroplis_step()
         self.t += 1
 
-    def simulate(self, thermalize_steps, sweep_steps):
-        for _ in range(thermalize_steps):
-            for _ in range(sweep_steps):
-                self.make_step()
+    def thermalize(self, n_thermalization: int = 1000):
+        """Thermalize the system by performing `n_thermalization` steps."""
+        for _ in range(n_thermalization):
+            self.make_step()
+
+    def sweep(self, n_sweeps: int = 1):
+        """Perform `n_sweeps` full-lattice sweeps."""
+        updates_per_sweep = int(np.prod(self.lattice_shape))
+        for _ in range(n_sweeps * updates_per_sweep):
+            self.make_step()
+
+    def make_step(self):
+        self._metropolis_step()
+        self.t += 1

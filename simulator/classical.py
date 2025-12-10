@@ -37,8 +37,11 @@ class BaseMetropolisSimulation:
         """Perform a single Metropolis step."""
         return NotImplementedError
 
-    def simulate(self, thermalize_steps, sweep_steps):
-        """Perform multiple Metropolis steps and return the final lattice configuration."""
+    def thermalize(self): 
+        """Thermalize the system by performing a specified number of Metropolis steps."""
+        return NotImplementedError
+
+    def sweep(self, n_steps):
         return NotImplementedError
 
     def get_energy(self):
@@ -47,6 +50,9 @@ class BaseMetropolisSimulation:
     
     def _get_delta_H(self, pos, new_val):
         """Compute the change in energy for a proposed update at position `pos` to `new_val`."""
+        raise NotImplementedError
+
+    def get_observables(self):
         raise NotImplementedError
 
     def to_numpy(self, array):
