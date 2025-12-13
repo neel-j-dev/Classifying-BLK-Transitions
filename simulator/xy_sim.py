@@ -707,8 +707,8 @@ if __name__ == "__main__":
     # )
 
     # L = 32
-    # T = 0.03
-    # n_therm = 500
+    # T = 3.0
+    # n_therm = 1000
     # n_sweeps = 100
 
     # # switch update="wolff" to test clusters
@@ -735,10 +735,10 @@ if __name__ == "__main__":
 
     # Build dataset with Wolff updates
     build_xy_dataset(
-        temperatures=np.arange(0.01, 1.2, 0.01),
+        temperatures=np.arange(0.01, 3.0, 0.01),
         lattice_shape=(32, 32),
-        burn_in_sweeps=500,
-        samples_per_temp=1,
+        burn_in_sweeps=1000,
+        samples_per_temp=10,
         sweeps_per_sample=75,
         proposal_width=np.pi,
         save_path="xy_dataset_wolff",
