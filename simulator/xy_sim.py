@@ -518,45 +518,229 @@ def build_xy_dataset(
 
     return stacked, metadata
 
+def analyze_xy_run(
+    mags_trace: np.ndarray,
+    energies_trace: np.ndarray,
+    T: float,
+    n_therm: int,
+    N: int,
+) -> dict:
+    """
+    Take full time series (including thermalization) at one temperature and
+    compute thermodynamic quantities from the production region.
+
+    Args:
+        mags_trace:     |M| per step (length = n_therm + n_sweeps)
+        energies_trace: energy per site per step
+        T:              temperature
+        n_therm:        number of initial steps to discard
+        N:              number of sites
+
+    Returns:
+        dict with keys:
+            "T", "beta", "E_mean", "E_var", "M_mean", "M_var",
+            "C"  (specific heat per site),
+            "chi" (susceptibility, rough, from |M| fluctuations).
+    """
+    beta = 1.0 / T
+    prod_E = np.asarray(energies_trace[n_therm:], dtype=np.float64)
+    prod_M = np.asarray(mags_trace[n_therm:], dtype=np.float64)
+
+    E_mean = prod_E.mean()
+    E2_mean = np.mean(prod_E**2)
+    M_mean = prod_M.mean()
+    M2_mean = np.mean(prod_M**2)
+
+    E_var = E2_mean - E_mean**2
+    M_var = M2_mean - M_mean**2
+
+    # specific heat per site: C = beta^2 * (⟨E^2⟩ - ⟨E⟩^2) * N / N = beta^2 * var(E_site) * N
+    C = beta**2 * E_var * N
+
+    # susceptibility (rough, because we're using |M| not vector M):
+    # χ ≈ beta * N * (⟨M^2⟩ - ⟨M⟩^2)
+    chi = beta * N * M_var
+
+    return {
+        "T": T,
+        "beta": beta,
+        "E_mean": float(E_mean),
+        "E_var": float(E_var),
+        "|M|_mean": float(M_mean),
+        "|M|_var": float(M_var),
+        "C": float(C),
+        "chi": float(chi),
+    }
+
+def scan_xy_temperatures(
+    temperatures: Sequence[float],
+    L: int,
+    n_therm: int,
+    n_sweeps: int,
+    J: float = 1.0,
+    h: float = 0.0,
+    sample_interval: int = 10,
+    proposal_width: float = np.pi / 2,
+    update: str = "wolff",
+    seed: Optional[int] = None,
+    save_prefix: str = "xy_Tscan",
+) -> List[dict]:
+    """
+    Scan over temperatures, run XY simulations, and compute thermodynamic
+    quantities for each T. Saves summary plots to PNGs.
+
+    Args:
+        temperatures:   list/array of T values to scan
+        L:              linear lattice size (Lx = Ly = L)
+        n_therm:        thermalization steps
+        n_sweeps:       production steps per temperature
+        J, h:           couplings (h MUST be 0 for Wolff)
+        sample_interval: passed to run_xy_chain (for snapshot saving)
+        proposal_width:  used only for Metropolis
+        update:          "metropolis" or "wolff"
+        seed:            base RNG seed
+        save_prefix:     prefix for output figure filenames
+
+    Returns:
+        results: list of dicts (one per T) as from analyze_xy_run
+    """
+    temps = np.array(list(temperatures), dtype=float)
+    if temps.size == 0:
+        raise ValueError("Need at least one temperature.")
+
+    rng = np.random.default_rng(seed)
+    neighbors, N, _, _ = make_square_lattice(L, L)  # just to know N
+
+    results: List[dict] = []
+
+    for T in tqdm(temps, desc=f"XY T-scan ({update})"):
+        chain_seed = int(rng.integers(0, 1_000_000_000))
+        configs, mags_trace, energies_trace = run_xy_chain(
+            Lx=L,
+            Ly=L,
+            T=T,
+            J=J,
+            h=h,
+            n_therm=n_therm,
+            n_sweeps=n_sweeps,
+            sample_interval=sample_interval,
+            proposal_width=proposal_width,
+            seed=chain_seed,
+            update=update,
+        )
+
+        res = analyze_xy_run(
+            mags_trace=mags_trace,
+            energies_trace=energies_trace,
+            T=T,
+            n_therm=n_therm,
+            N=N,
+        )
+        results.append(res)
+
+    # Convert to arrays for plotting
+    Ts = np.array([r["T"] for r in results])
+    E_mean = np.array([r["E_mean"] for r in results])
+    M_mean = np.array([r["|M|_mean"] for r in results])
+    C_vals = np.array([r["C"] for r in results])
+    chi_vals = np.array([r["chi"] for r in results])
+
+    # --- Plot thermodynamics vs T ---
+    fig, axs = plt.subplots(2, 2, figsize=(8, 6))
+    ax = axs[0, 0]
+    ax.plot(Ts, E_mean, "o-")
+    ax.set_xlabel("T")
+    ax.set_ylabel(r"$\langle E \rangle$")
+
+    ax = axs[0, 1]
+    ax.plot(Ts, M_mean, "o-")
+    ax.set_xlabel("T")
+    ax.set_ylabel(r"$\langle |M| \rangle$")
+
+    ax = axs[1, 0]
+    ax.plot(Ts, C_vals, "o-")
+    ax.set_xlabel("T")
+    ax.set_ylabel("C (per site)")
+
+    ax = axs[1, 1]
+    ax.plot(Ts, chi_vals, "o-")
+    ax.set_xlabel("T")
+    ax.set_ylabel(r"$\chi$ (rough)")
+
+    fig.suptitle(f"XY model, L = {L}, update = {update}")
+    plt.tight_layout()
+    fig.savefig(f"{save_prefix}_L{L}_{update}.png", dpi=200)
+    print(f"Saved T-scan plot to {save_prefix}_L{L}_{update}.png")
+
+    # crude "estimate" of critical T from chi maximum
+    Tc_idx = np.argmax(C_vals)
+    print(Tc_idx, C_vals)
+    print(f"Max susceptibility at T ≈ {Ts[Tc_idx]:.3f}")
+
+    return results
+
+
 
 # ---------- QUICK TEST ----------
 
 if __name__ == "__main__":
-    L = 32
-    T = 0.88
-    n_therm = 500
-    n_sweeps = 100
 
-    # switch update="wolff" to test clusters
-    configs, mags_trace, energies_trace = run_xy_chain(
-        Lx=L, Ly=L, T=T,
-        J=1.0, h=0.0,
-        n_therm=n_therm,
-        n_sweeps=n_sweeps,
-        sample_interval=100,
-        proposal_width=np.pi,   # ignored for Wolff
-        seed=42,
-        update="wolff",
-    )
+    # L = 64
+    # n_therm = 1000
+    # n_sweeps = 20
 
-    print("Configs shape:", configs.shape)
+    # temps = np.linspace(0.3, 1.0, 12)  # coarse scan around BKT
 
-    # Plot observables and thermalization
-    plot_thermalization(mags_trace, energies_trace, n_therm=n_therm)
+    # # Use Wolff to get good statistics near criticality
+    # results = scan_xy_temperatures(
+    #     temperatures=temps,
+    #     L=L,
+    #     n_therm=n_therm,
+    #     n_sweeps=n_sweeps,
+    #     J=1.0,
+    #     h=0.0,
+    #     sample_interval=30,
+    #     proposal_width=np.pi,   # ignored for Wolff
+    #     update="wolff",
+    #     seed=123,
+    #     save_prefix="xy_Tscan",
+    # )
 
-    # Autocorrelation estimate on production part
-    prod_mags = mags_trace[n_therm:]
-    tau, lags, C = estimate_autocorr_time(prod_mags, threshold=0.1, max_lag=None)
-    print("Estimated autocorrelation time in production region (C<0.1):", tau)
+    # L = 32
+    # T = 0.03
+    # n_therm = 500
+    # n_sweeps = 100
 
-    # Build dataset with Wolff updates
-    # build_xy_dataset(
-    #     temperatures=np.arange(0.7, 0.9, 0.1),
-    #     lattice_shape=(64, 64),
-    #     burn_in_sweeps=20000,
-    #     samples_per_temp=1,
-    #     sweeps_per_sample=300,
-    #     proposal_width=np.pi,
-    #     save_path="xy_dataset_wolff",
+    # # switch update="wolff" to test clusters
+    # configs, mags_trace, energies_trace = run_xy_chain(
+    #     Lx=L, Ly=L, T=T,
+    #     J=1.0, h=0.0,
+    #     n_therm=n_therm,
+    #     n_sweeps=n_sweeps,
+    #     sample_interval=100,
+    #     proposal_width=np.pi,   # ignored for Wolff
+    #     seed=42,
     #     update="wolff",
     # )
+
+    # print("Configs shape:", configs.shape)
+
+    # # Plot observables and thermalization
+    # plot_thermalization(mags_trace, energies_trace, n_therm=n_therm)
+
+    # # Autocorrelation estimate on production part
+    # prod_mags = mags_trace[n_therm:]
+    # tau, lags, C = estimate_autocorr_time(prod_mags, threshold=0.1, max_lag=None)
+    # print("Estimated autocorrelation time in production region (C<0.1):", tau)
+
+    # Build dataset with Wolff updates
+    build_xy_dataset(
+        temperatures=np.arange(0.01, 1.2, 0.01),
+        lattice_shape=(32, 32),
+        burn_in_sweeps=500,
+        samples_per_temp=1,
+        sweeps_per_sample=75,
+        proposal_width=np.pi,
+        save_path="xy_dataset_wolff",
+        update="wolff",
+    )
