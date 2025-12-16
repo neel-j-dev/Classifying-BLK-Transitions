@@ -204,7 +204,8 @@ def run_xy_chain(Lx, Ly, T, J=1.0, h=0.0,
                  sample_interval=10,
                  proposal_width=np.pi / 2,
                  seed=1234,
-                 update: str = "metropolis"):
+                 update: str = "metropolis", 
+                 initial_state: Optional[np.ndarray] = None):
     """
     Run a single-chain 2D XY simulation.
 
@@ -233,11 +234,16 @@ def run_xy_chain(Lx, Ly, T, J=1.0, h=0.0,
         raise ValueError("Wolff cluster algorithm for XY is implemented only for h = 0.")
 
     np.random.seed(seed)
-    neighbors, N, Lx, Ly = make_square_lattice(Lx, Ly)
     beta = 1.0 / T
+    neighbors, N, Lx, Ly = make_square_lattice(Lx, Ly)
 
-    # random initial angles θ ∈ [0, 2π)
-    theta = np.random.rand(N) * 2.0 * np.pi
+    if initial_state is not None:
+        theta = initial_state.flatten()
+        if theta.shape[0] != Lx * Ly:
+            raise ValueError("Initial state shape does not match lattice size.")
+    else: 
+        # random initial angles θ ∈ [0, 2π)
+        theta = np.random.rand(N) * 2.0 * np.pi
 
     total_sweeps = n_therm + n_sweeps
     mags_trace = np.empty(total_sweeps, dtype=np.float64)
@@ -475,6 +481,7 @@ def build_xy_dataset(
             proposal_width=proposal_width,
             seed=chain_seed,
             update=update,
+            initial_state=flat_configs[-1].reshape(lattice_shape) if flat_configs else None,
         )
 
         if configs.shape[0] < samples_per_temp:
@@ -706,16 +713,16 @@ if __name__ == "__main__":
     #     save_prefix="xy_Tscan",
     # )
 
-    # L = 32
-    # T = 3.0
-    # n_therm = 1000
+    # L = 128
+    # T = 0.01
+    # n_therm = 800
     # n_sweeps = 100
 
     # # switch update="wolff" to test clusters
     # configs, mags_trace, energies_trace = run_xy_chain(
     #     Lx=L, Ly=L, T=T,
     #     J=1.0, h=0.0,
-    #     n_therm=n_therm,
+    #     n_therm=200,
     #     n_sweeps=n_sweeps,
     #     sample_interval=100,
     #     proposal_width=np.pi,   # ignored for Wolff
@@ -723,20 +730,45 @@ if __name__ == "__main__":
     #     update="wolff",
     # )
 
+    # for i in tqdm(range(1, 200)): 
+    #     configs, mags_trace, energies_trace = run_xy_chain(
+    #         Lx=L, Ly=L, T=T+i*0.01,
+    #         J=1.0, h=0.0,
+    #         n_therm=1000,
+    #         n_sweeps=n_sweeps,
+    #         sample_interval=100,
+    #         proposal_width=np.pi,   # ignored for Wolff
+    #         seed=42,
+    #         update="wolff",
+    #         initial_state=configs[-1],  # warm start from previous run
+    #     )
+
+    # configs, mags_trace, energies_trace = run_xy_chain(
+    #         Lx=L, Ly=L, T=2.01,
+    #         J=1.0, h=0.0,
+    #         n_therm=6000,
+    #         n_sweeps=n_sweeps,
+    #         sample_interval=100,
+    #         proposal_width=np.pi,   # ignored for Wolff
+    #         seed=42,
+    #         update="wolff",
+    #         initial_state=configs[-1],  # warm start from previous run
+    #     )
+
     # print("Configs shape:", configs.shape)
 
     # # Plot observables and thermalization
-    # plot_thermalization(mags_trace, energies_trace, n_therm=n_therm)
+    # plot_thermalization(mags_trace, energies_trace, n_therm=1000)
 
-    # # Autocorrelation estimate on production part
+    # Autocorrelation estimate on production part
     # prod_mags = mags_trace[n_therm:]
     # tau, lags, C = estimate_autocorr_time(prod_mags, threshold=0.1, max_lag=None)
     # print("Estimated autocorrelation time in production region (C<0.1):", tau)
 
     # Build dataset with Wolff updates
     build_xy_dataset(
-        temperatures=np.arange(0.01, 3.0, 0.01),
-        lattice_shape=(32, 32),
+        temperatures=np.arange(0.01, 2, 0.01),
+        lattice_shape=(128, 128),
         burn_in_sweeps=1000,
         samples_per_temp=10,
         sweeps_per_sample=75,
