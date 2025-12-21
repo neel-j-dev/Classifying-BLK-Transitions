@@ -71,4 +71,4 @@ def main() -> None:
     print(f"embed_dim = {res.embedding.shape[1]}")
     print(f"Tc estimate (50% crossing) = {res.tc:.6g}")
 if __name__ == "__main__":
-    main()
+    run_xy()
