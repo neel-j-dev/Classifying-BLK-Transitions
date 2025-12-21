@@ -47,6 +47,7 @@ Open `simulator/XY_Diffusion_Map.ipynb` in Jupyter/VS Code. It:
 
 ## Ising reference
 `ising/ising.cpp` and `ising/Ising.ipynb` contain a minimal Ising implementation/visualization for comparison with the XY results.
+`ising/ising.cpp` was forked and originally from `https://github.com/VictorSeven/IsingModel`
 
 ## Notes
 - Default requirements: NumPy/SciPy, scikit-learn, matplotlib, torch/torch-geometric (for GNN experiments), pacmap/umap-learn for optional manifold learning.
