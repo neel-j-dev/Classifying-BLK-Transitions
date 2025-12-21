@@ -21,11 +21,11 @@ from utils import (
 )
 
 def run_xy() -> None:
-    xy_npz = "xy_dataset_wolff_128x128.npz"
+    xy_npz = "xy/xy_dataset_wolff_128x128.npz"
     with np.load(xy_npz) as z:
         theta = np.asarray(z["configurations"], dtype=np.float32)
 
-    meta_path = "xy_dataset_wolff.metadata_128x128.json"
+    meta_path = "xy/xy_dataset_wolff.metadata_128x128.json"
     import json
 
     meta = json.load(open(meta_path))
@@ -51,7 +51,7 @@ def run_xy() -> None:
 
 
 def main() -> None:
-    ising_bin = "Ising/ising_configs_L100.bin"
+    ising_bin = "ising/ising_configs_L100.bin"
     ds = load_ising_configs_bin(ising_bin, block=None)
     n_samp = min(10, int(ds.X.shape[1]))
     configs = ds.configs[:, :n_samp].reshape(ds.temps.size * n_samp, -1)
