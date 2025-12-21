@@ -46,7 +46,7 @@ def make_square_lattice(Lx, Ly=None):
 
     for y in range(Ly):
         for x in range(Lx):
-            i = x + Lx * y
+            i = x + Lx * y  # linear index for site (x, y)
             xp = (x + 1) % Lx
             xm = (x - 1) % Lx
             yp = (y + 1) % Ly
@@ -84,7 +84,7 @@ def xy_metropolis_sweep(theta, neighbors, beta, J, h, proposal_width):
     for i in range(N):
         theta_i = theta[i]
 
-        # propose a new angle for site i
+        # propose a new angle for site i (uniform step in [-proposal_width, proposal_width])
         delta = (np.random.rand() - 0.5) * 2.0 * proposal_width
         theta_new = theta_i + delta
 
@@ -158,8 +158,8 @@ def xy_wolff_step(theta, neighbors, beta, J):
     in_cluster = np.zeros(N, dtype=np.uint8)
     stack = np.empty(N, dtype=np.int64)
 
-    in_cluster[seed] = 1
-    stack[0] = seed
+    in_cluster[seed] = 1  # mark seed as part of the cluster
+    stack[0] = seed       # DFS stack
     stack_size = 1
     cluster_size = 1
 
@@ -204,7 +204,7 @@ def run_xy_chain(Lx, Ly, T, J=1.0, h=0.0,
                  sample_interval=10,
                  proposal_width=np.pi / 2,
                  seed=1234,
-                 update: str = "metropolis", 
+                 update: str = "metropolis",
                  initial_state: Optional[np.ndarray] = None):
     """
     Run a single-chain 2D XY simulation.
@@ -241,8 +241,8 @@ def run_xy_chain(Lx, Ly, T, J=1.0, h=0.0,
         theta = initial_state.flatten()
         if theta.shape[0] != Lx * Ly:
             raise ValueError("Initial state shape does not match lattice size.")
-    else: 
-        # random initial angles θ ∈ [0, 2π)
+    else:
+        # random initial angles θ ∈ [0, 2π) to start from a hot configuration
         theta = np.random.rand(N) * 2.0 * np.pi
 
     total_sweeps = n_therm + n_sweeps
@@ -255,12 +255,13 @@ def run_xy_chain(Lx, Ly, T, J=1.0, h=0.0,
     sample_idx = 0
 
     for sweep in tqdm(range(total_sweeps), desc=f"XY ({update})"):
+        # choose update rule (single-spin or cluster)
         if update == "metropolis":
             xy_metropolis_sweep(theta, neighbors, beta, J, h, proposal_width)
         else:  # "wolff"
             xy_wolff_step(theta, neighbors, beta, J)
 
-        # compute observables THIS step
+        # compute observables THIS step (energy per site and |M|)
         E_per_site, M_abs = xy_observables(theta, neighbors, J, h)
         mags_trace[sweep] = M_abs
         energies_trace[sweep] = E_per_site
@@ -334,7 +335,7 @@ def autocorrelation(series, max_lag=None):
     if max_lag is None or max_lag >= T:
         max_lag = T - 1
 
-    x_mean = x.mean()
+    x_mean = x.mean()  # subtract mean to get fluctuations
     var = np.mean((x - x_mean) ** 2)
     if var == 0.0:
         # series is constant -> trivially fully correlated
@@ -465,6 +466,7 @@ def build_xy_dataset(
     metadata: List[dict] = []
     total_tasks = len(temps)
 
+    # track loop over temperatures
     progress = tqdm(total=total_tasks, desc=f"XY dataset ({update})", disable=not show_progress)
     for temp_idx, temp in enumerate(temps):
         chain_seed = int(rng.integers(0, 1_000_000_000))
@@ -509,7 +511,7 @@ def build_xy_dataset(
             )
 
         if progress is not None:
-            progress.update(1)
+            progress.update(1)  # one temperature completed
 
     if progress is not None:
         progress.close()
