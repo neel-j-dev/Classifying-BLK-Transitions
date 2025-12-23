@@ -28,6 +28,7 @@ except ImportError:
 
 # ---------- LATTICE LAYER (same idea as Ising) ----------
 
+@njit
 def make_square_lattice(Lx, Ly=None):
     """
     Build a 2D square lattice with periodic boundary conditions.
@@ -215,8 +216,8 @@ from typing import Dict
 
 def run_gxy_chain_auto_therm(
     Lx, Ly, T, J=1.0, delta=1.0,
-    n_sweeps=10000,
-    sample_interval=10,
+    n_sweeps=100,
+    sample_interval=100
     proposal_width=np.pi / 2,
     seed=1234,
     update: str = "metropolis",
@@ -225,12 +226,12 @@ def run_gxy_chain_auto_therm(
     # --- adaptive therm params ---
     auto_therm: bool = True,
     max_therm: int = 1500,
-    window: int = 50,
+    window: int = 200,
     check_every: int = 50,
     patience: int = 4,
-    rel_tol_E: float = 5e-3,
-    abs_tol_M: float = 2e-3,
-    abs_tol_Q: float = 2e-3,
+    rel_tol_E: float = 5e-1,
+    abs_tol_M: float = 2e-2,
+    abs_tol_Q: float = 2e-2,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict]:
     """
     gXY simulation with optional adaptive thermalization.
@@ -886,6 +887,7 @@ if __name__ == "__main__":
     L = 128
     T = 0.01
     delta = 0.15
+    n_sweeps=100
 
     # switch update="wolff" to test clusters
     configs, mags_trace, nem_trace, energies_trace, _ = run_gxy_chain_auto_therm(
@@ -893,7 +895,7 @@ if __name__ == "__main__":
         J=1.0,
         n_sweeps=n_sweeps,
         sample_interval=100,
-        proposal_width=0.1,  
+        proposal_width=0.05,  
         seed=42,
         update="metropolis",
         max_therm=900
