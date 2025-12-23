@@ -245,6 +245,7 @@ def run_gxy_chain_auto_therm(
       - This heuristic detects stationarity of window-means, not true mixing. It's better than
         a fixed guess, but still not a proof of equilibration.
     """
+    print("HAS_NUMBA: ", HAS_NUMBA)
     if update not in ("metropolis",):
         raise ValueError("This version currently supports only 'metropolis' for gXY.")
 
@@ -885,11 +886,9 @@ if __name__ == "__main__":
     L = 128
     T = 0.01
     delta = 0.15
-    n_therm = 800
-    n_sweeps = 100
 
     # switch update="wolff" to test clusters
-    configs, mags_trace, energies_trace = run_gxy_chain_auto_therm(
+    configs, mags_trace, nem_trace, energies_trace, _ = run_gxy_chain_auto_therm(
         Lx=L, Ly=L, T=T, delta=delta,
         J=1.0,
         n_sweeps=n_sweeps,
@@ -897,6 +896,7 @@ if __name__ == "__main__":
         proposal_width=0.1,  
         seed=42,
         update="metropolis",
+        max_therm=900
     )
 
     # for i in tqdm(range(1, 200)): 
@@ -927,7 +927,7 @@ if __name__ == "__main__":
     # print("Configs shape:", configs.shape)
 
     # Plot observables and thermalization
-    plot_thermalization(mags_trace, energies_trace, n_therm=1000)
+    plot_thermalization(mags_trace, nem_trace, energies_trace, n_therm=1000)
 
     # Autocorrelation estimate on production part
     # prod_mags = mags_trace[n_therm:]
