@@ -217,7 +217,7 @@ from typing import Dict
 def run_gxy_chain_auto_therm(
     Lx, Ly, T, J=1.0, delta=1.0,
     n_sweeps=100,
-    sample_interval=100
+    sample_interval=100,
     proposal_width=np.pi / 2,
     seed=1234,
     update: str = "metropolis",
@@ -554,6 +554,52 @@ def gxy_snapshot_energy_density(snapshot: np.ndarray, J: float, delta: float) ->
 
 
 
+def _serpentine_points(temperatures: Sequence[float], deltas: Sequence[float]) -> List[Tuple[float, float]]:
+    """
+    Return a path that walks the (T, delta) grid in a serpentine pattern
+    to keep successive points close.
+    """
+    temps_sorted = sorted(set(float(t) for t in temperatures))
+    deltas_sorted = sorted(set(float(d) for d in deltas))
+
+    path: List[Tuple[float, float]] = []
+    for idx, delta in enumerate(deltas_sorted):
+        row = temps_sorted if idx % 2 == 0 else list(reversed(temps_sorted))
+        for temp in row:
+            path.append((temp, delta))
+    return path
+
+
+def _nearest_cached_state(
+    T: float,
+    delta: float,
+    cache: dict,
+    max_distance: Optional[float],
+) -> Tuple[Optional[np.ndarray], Optional[Tuple[float, float]], float]:
+    """
+    Pick the cached configuration whose parameters are closest in the
+    T/delta plane. If max_distance is not None, ignore candidates farther
+    than that threshold.
+    """
+    best_key: Optional[Tuple[float, float]] = None
+    best_dist = float("inf")
+    for key in cache.keys():
+        dt = T - key[0]
+        dd = delta - key[1]
+        dist = float(np.hypot(dt, dd))
+        if dist < best_dist:
+            best_dist = dist
+            best_key = key
+
+    if best_key is None:
+        return None, None, float("inf")
+
+    if max_distance is not None and best_dist > max_distance:
+        return None, best_key, best_dist
+
+    return cache[best_key], best_key, best_dist
+
+
 def build_xy_dataset(
     temperatures: Sequence[float],
     deltas: Sequence[float],
@@ -599,12 +645,12 @@ def build_xy_dataset(
                 T=temp,
                 J=J,
                 delta = delta,
-                n_therm=burn_in_sweeps,
                 n_sweeps=n_production_sweeps,
                 sample_interval=sweeps_per_sample,
                 proposal_width=proposal_width,
                 seed=chain_seed,
                 update=update,
+                max_therm=burn_in_sweeps,
                 initial_state=flat_configs[-1].reshape(lattice_shape) if flat_configs else None,
             )
 
@@ -636,6 +682,145 @@ def build_xy_dataset(
 
             if progress is not None:
                 progress.update(1)  # one temperature completed
+
+    if progress is not None:
+        progress.close()
+
+    stacked = np.stack(flat_configs)
+
+    if save_path is not None:
+        save_path = Path(save_path)
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(save_path, configurations=stacked)
+        metadata_path = save_path.parent / f"{save_path.name}.metadata.json"
+        metadata_path.write_text(json.dumps(metadata, indent=2))
+
+    return stacked, metadata
+
+
+def build_gxy_plane_dataset(
+    temperatures: Sequence[float],
+    deltas: Sequence[float],
+    samples_per_point: int,
+    lattice_shape: Tuple[int, int],
+    sweeps_per_sample: int,
+    *,
+    J: float = 1.0,
+    proposal_width: float = np.pi / 2,
+    n_overrelax: int = 1,
+    warm_start_max_distance: Optional[float] = 0.25,
+    serpentine: bool = True,
+    update: str = "metropolis",
+    seed: Optional[int] = None,
+    show_progress: bool = True,
+    save_path: Optional[Union[str, Path]] = None,
+    max_therm: int = 1500,
+    window: int = 200,
+    check_every: int = 50,
+    patience: int = 4,
+    rel_tol_E: float = 5e-1,
+    abs_tol_M: float = 2e-2,
+    abs_tol_Q: float = 2e-2,
+) -> Tuple[np.ndarray, List[dict]]:
+    """
+    Build a dataset over a (T, delta) plane, traversing nearby points and
+    reusing the last configuration from the closest simulated point as a
+    warm start.
+    """
+    temps = list(temperatures)
+    dels = list(deltas)
+    if not temps:
+        raise ValueError("`temperatures` must contain at least one entry.")
+    if not dels:
+        raise ValueError("`deltas` must contain at least one entry.")
+    if samples_per_point <= 0 or sweeps_per_sample <= 0:
+        raise ValueError("`samples_per_point` and `sweeps_per_sample` must be positive.")
+    if update != "metropolis":
+        raise ValueError("Only the local Metropolis update is supported here.")
+
+    path = _serpentine_points(temps, dels) if serpentine else [
+        (float(t), float(d)) for d in sorted(set(dels)) for t in sorted(set(temps))
+    ]
+
+    rng = np.random.default_rng(seed)
+    flat_configs: List[np.ndarray] = []
+    metadata: List[dict] = []
+    cache: dict = {}
+    last_state: Optional[np.ndarray] = None
+    last_key: Optional[Tuple[float, float]] = None
+
+    total_tasks = len(path)
+    progress = tqdm(total=total_tasks, desc="gXY plane dataset", disable=not show_progress)
+
+    for point_idx, (temp, delta) in enumerate(path):
+        warm_state, warm_key, warm_dist = _nearest_cached_state(
+            temp, delta, cache=cache, max_distance=warm_start_max_distance
+        )
+        if warm_state is None and last_state is not None and last_key is not None:
+            warm_state = last_state
+            warm_key = last_key
+            warm_dist = float(np.hypot(temp - last_key[0], delta - last_key[1]))
+
+        chain_seed = int(rng.integers(0, 1_000_000_000))
+        n_production_sweeps = samples_per_point * sweeps_per_sample
+
+        configs, mags_trace, nem_trace, energies_trace, info = run_gxy_chain_auto_therm(
+            Lx=lattice_shape[0],
+            Ly=lattice_shape[1],
+            T=temp,
+            J=J,
+            delta=delta,
+            n_sweeps=n_production_sweeps,
+            sample_interval=sweeps_per_sample,
+            proposal_width=proposal_width,
+            seed=chain_seed,
+            update=update,
+            n_overrelax=n_overrelax,
+            initial_state=warm_state,
+            max_therm=max_therm,
+            window=window,
+            check_every=check_every,
+            patience=patience,
+            rel_tol_E=rel_tol_E,
+            abs_tol_M=abs_tol_M,
+            abs_tol_Q=abs_tol_Q,
+        )
+
+        final_state = np.asarray(configs[-1], dtype=np.float64)
+        cache[(temp, delta)] = final_state
+        last_state = final_state
+        last_key = (temp, delta)
+
+        warm_source_T = warm_key[0] if warm_key is not None else None
+        warm_source_delta = warm_key[1] if warm_key is not None else None
+        warm_dist_clean = None if not np.isfinite(warm_dist) else float(warm_dist)
+
+        for sample_idx in range(samples_per_point):
+            snapshot = np.asarray(configs[sample_idx], dtype=np.float32)
+            flat_configs.append(snapshot.reshape(-1))
+            metadata.append(
+                {
+                    "temperature": float(temp),
+                    "beta": 1.0 / float(temp),
+                    "sample_idx": sample_idx,
+                    "magnetization": gxy_snapshot_magnetization(snapshot),
+                    "nematic": gxy_snapshot_nematic(snapshot),
+                    "energy_density": gxy_snapshot_energy_density(snapshot, J=J, delta=delta),
+                    "lattice_shape": f"{lattice_shape[0]}x{lattice_shape[1]}",
+                    "J": float(J),
+                    "delta": float(delta),
+                    "proposal_width": float(proposal_width),
+                    "update": update,
+                    "n_overrelax": int(n_overrelax),
+                    "n_therm": int(info.get("n_therm", 0)),
+                    "warm_start_source_T": warm_source_T,
+                    "warm_start_source_delta": warm_source_delta,
+                    "warm_start_distance": warm_dist_clean,
+                }
+            )
+
+        if progress is not None:
+            progress.update(1)
 
     if progress is not None:
         progress.close()
@@ -884,22 +1069,22 @@ if __name__ == "__main__":
     #     save_prefix="xy_Tscan",
     # )
 
-    L = 128
-    T = 0.01
-    delta = 0.15
-    n_sweeps=100
+    # L = 128
+    # T = 0.01
+    # delta = 0.15
+    # n_sweeps=100
 
     # switch update="wolff" to test clusters
-    configs, mags_trace, nem_trace, energies_trace, _ = run_gxy_chain_auto_therm(
-        Lx=L, Ly=L, T=T, delta=delta,
-        J=1.0,
-        n_sweeps=n_sweeps,
-        sample_interval=100,
-        proposal_width=0.05,  
-        seed=42,
-        update="metropolis",
-        max_therm=900
-    )
+    # configs, mags_trace, nem_trace, energies_trace, _ = run_gxy_chain_auto_therm(
+    #     Lx=L, Ly=L, T=T, delta=delta,
+    #     J=1.0,
+    #     n_sweeps=n_sweeps,
+    #     sample_interval=100,
+    #     proposal_width=0.05,  
+    #     seed=42,
+    #     update="metropolis",
+    #     max_therm=900
+    # )
 
     # for i in tqdm(range(1, 200)): 
     #     configs, mags_trace, energies_trace = run_xy_chain(
@@ -929,21 +1114,23 @@ if __name__ == "__main__":
     # print("Configs shape:", configs.shape)
 
     # Plot observables and thermalization
-    plot_thermalization(mags_trace, nem_trace, energies_trace, n_therm=1000)
+    # plot_thermalization(mags_trace, nem_trace, energies_trace, n_therm=1000)
 
     # Autocorrelation estimate on production part
     # prod_mags = mags_trace[n_therm:]
     # tau, lags, C = estimate_autocorr_time(prod_mags, threshold=0.1, max_lag=None)
     # print("Estimated autocorrelation time in production region (C<0.1):", tau)
 
-    # Build dataset with Wolff updates
-    # build_xy_dataset(
-    #     temperatures=np.arange(0.01, 2, 0.01),
-    #     lattice_shape=(128, 128),
-    #     burn_in_sweeps=1000,
-    #     samples_per_temp=10,
-    #     sweeps_per_sample=75,
-    #     proposal_width=np.pi,
-    #     save_path="xy_dataset_wolff",
-    #     update="wolff",
-    # )
+
+    configs, meta = build_gxy_plane_dataset(
+        temperatures=np.linspace(0.1, 1.0, 5),
+        deltas=np.linspace(0.0, 1.0, 5),
+        samples_per_point=1,
+        lattice_shape=(32, 32),
+        sweeps_per_sample=100,
+        warm_start_max_distance=0.1,  # None to always reuse nearest
+        proposal_width=0.3,
+        n_overrelax=2,
+        max_therm=1200,
+        save_path="gxy_dataset"
+    )
