@@ -1123,10 +1123,10 @@ if __name__ == "__main__":
 
 
     configs, meta = build_gxy_plane_dataset(
-        temperatures=np.linspace(0.1, 1.0, 50),
-        deltas=np.linspace(0.0, 1.0, 50),
-        samples_per_point=5,
-        lattice_shape=(32, 32),
+        temperatures=np.linspace(0.1, 1.0, 20),
+        deltas=np.linspace(0.0, 1.0, 20),
+        samples_per_point=1,
+        lattice_shape=(16, 16),
         sweeps_per_sample=100,
         warm_start_max_distance=0.1,  # None to always reuse nearest
         proposal_width=0.3,
